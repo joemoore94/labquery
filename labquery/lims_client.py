@@ -6,6 +6,7 @@ or any future LIMS can be swapped in without changing the NL or PLR layers.
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -115,10 +116,23 @@ class LabioAllClient(LIMSClient):
 
     def _fetch_all_samples(self) -> None:
         ids = self.list_sample_ids()
-        for sid in ids:
-            if sid not in self._sample_cache:
-                self.get_sample(sid)
+        uncached = [sid for sid in ids if sid not in self._sample_cache]
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+            futures = {executor.submit(self._fetch_one, sid): sid for sid in uncached}
+            concurrent.futures.wait(futures)
+
         self._all_fetched = True
+
+    def _fetch_one(self, sample_id: str) -> Sample | None:
+        """Fetch a single sample (thread-safe, used by concurrent fetcher)."""
+        resp = self._http.get(f"/sample/{sample_id}")
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        sample = self._parse_sample(sample_id, resp.json())
+        self._sample_cache[sample_id] = sample
+        return sample
 
     def update_sample_volume(self, sample_id: str, new_volume_ul: float) -> bool:
         resp = self._http.post(

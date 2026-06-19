@@ -7,6 +7,7 @@ fed back to Claude -> natural language response to user.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 import anthropic
@@ -50,47 +51,17 @@ class Conversation:
         return [{"role": m.role, "content": m.content} for m in self.messages]
 
 
-class NLLayer:
-    """Orchestrates the Claude tool-use loop for labquery."""
+class ToolDispatcher:
+    """Routes tool calls to the appropriate LIMS/PLR handler.
 
-    def __init__(
-        self,
-        lims: LIMSClient,
-        plr: PLRRunner,
-        model: str = "claude-haiku-4-5-20251001",
-    ):
+    Shared by NLLayer (blocking CLI) and the WebSocket server (streaming).
+    """
+
+    def __init__(self, lims: LIMSClient, plr: PLRRunner):
         self.lims = lims
         self.plr = plr
-        self.model = model
-        self.client = anthropic.Anthropic()
-        self.conversation = Conversation()
 
-    def query(self, user_input: str) -> str:
-        self.conversation.add_user(user_input)
-
-        while True:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=self.conversation.to_api_messages(),
-            )
-
-            if response.stop_reason == "tool_use":
-                self.conversation.add_assistant(
-                    [block.model_dump() for block in response.content]
-                )
-                for block in response.content:
-                    if block.type == "tool_use":
-                        result = self._dispatch(block.name, block.input)
-                        self.conversation.add_tool_result(block.id, result)
-            else:
-                text = self._extract_text(response)
-                self.conversation.add_assistant(text)
-                return text
-
-    def _dispatch(self, tool_name: str, tool_input: dict) -> str:
+    def dispatch(self, tool_name: str, tool_input: dict) -> str:
         handlers = {
             "query_sample_status": self._handle_query_sample,
             "check_inventory": self._handle_check_inventory,
@@ -180,6 +151,92 @@ class NLLayer:
             "total_count": len(ids),
             "sample_ids": ids[:limit],
         })
+
+
+class NLLayer:
+    """Orchestrates the Claude tool-use loop for labquery."""
+
+    def __init__(
+        self,
+        lims: LIMSClient,
+        plr: PLRRunner,
+        model: str = "claude-haiku-4-5-20251001",
+    ):
+        self.model = model
+        self.client = anthropic.Anthropic()
+        self.conversation = Conversation()
+        self.dispatcher = ToolDispatcher(lims, plr)
+
+    def query(self, user_input: str) -> str:
+        self.conversation.add_user(user_input)
+
+        while True:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=1024,
+                system=SYSTEM_PROMPT,
+                tools=TOOLS,
+                messages=self.conversation.to_api_messages(),
+            )
+
+            if response.stop_reason == "tool_use":
+                self.conversation.add_assistant(
+                    [block.model_dump() for block in response.content]
+                )
+                for block in response.content:
+                    if block.type == "tool_use":
+                        result = self.dispatcher.dispatch(block.name, block.input)
+                        self.conversation.add_tool_result(block.id, result)
+            else:
+                text = self._extract_text(response)
+                self.conversation.add_assistant(text)
+                return text
+
+    def query_stream(self, user_input: str) -> Iterator[dict]:
+        """Process a query with streaming, yielding events as they happen."""
+        self.conversation.add_user(user_input)
+
+        while True:
+            yield {"type": "stream_start"}
+
+            collected_content = []
+            stop_reason = None
+
+            with self.client.messages.stream(
+                model=self.model,
+                max_tokens=1024,
+                system=SYSTEM_PROMPT,
+                tools=TOOLS,
+                messages=self.conversation.to_api_messages(),
+            ) as stream:
+                for event in stream:
+                    if hasattr(event, "type"):
+                        if event.type == "content_block_delta":
+                            if hasattr(event.delta, "text"):
+                                yield {"type": "stream_delta", "text": event.delta.text}
+
+                final = stream.get_final_message()
+                collected_content = final.content
+                stop_reason = final.stop_reason
+
+            if stop_reason == "tool_use":
+                self.conversation.add_assistant(
+                    [block.model_dump() for block in collected_content]
+                )
+                for block in collected_content:
+                    if block.type == "tool_use":
+                        yield {"type": "tool_call", "tool": block.name, "input": block.input}
+                        result = self.dispatcher.dispatch(block.name, block.input)
+                        yield {"type": "tool_result", "tool": block.name, "result": result}
+                        self.conversation.add_tool_result(block.id, result)
+            else:
+                full_text = ""
+                for block in collected_content:
+                    if hasattr(block, "text"):
+                        full_text += block.text
+                self.conversation.add_assistant(full_text)
+                yield {"type": "stream_end", "full_text": full_text}
+                return
 
     @staticmethod
     def _extract_text(response) -> str:

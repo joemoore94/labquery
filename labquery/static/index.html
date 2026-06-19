@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>labquery</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f1117;
+            color: #e4e4e7;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: #1a1b23;
+            border-bottom: 1px solid #2a2b35;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #a78bfa;
+        }
+
+        header .status {
+            font-size: 12px;
+            color: #71717a;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        header .status .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+        }
+
+        header .status .dot.connected { background: #22c55e; }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.5;
+            font-size: 14px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: #4338ca;
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+            background: #1e1f2a;
+            border: 1px solid #2a2b35;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.tool-indicator {
+            align-self: flex-start;
+            background: transparent;
+            border: 1px dashed #3f3f46;
+            color: #a1a1aa;
+            font-size: 12px;
+            padding: 8px 12px;
+            font-family: monospace;
+        }
+
+        .message.tool-indicator.done {
+            border-color: #22c55e;
+            color: #4ade80;
+        }
+
+        #input-area {
+            background: #1a1b23;
+            border-top: 1px solid #2a2b35;
+            padding: 16px 20px;
+            display: flex;
+            gap: 12px;
+        }
+
+        #input-area input {
+            flex: 1;
+            background: #0f1117;
+            border: 1px solid #2a2b35;
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #e4e4e7;
+            font-size: 14px;
+            outline: none;
+        }
+
+        #input-area input:focus {
+            border-color: #4338ca;
+        }
+
+        #input-area input::placeholder {
+            color: #52525b;
+        }
+
+        #input-area button {
+            background: #4338ca;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 20px;
+            color: #fff;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        #input-area button:hover { background: #4f46e5; }
+        #input-area button:disabled { background: #27272a; color: #52525b; cursor: default; }
+
+        .welcome {
+            text-align: center;
+            color: #71717a;
+            padding: 40px 20px;
+            line-height: 1.8;
+        }
+
+        .welcome h2 {
+            color: #a78bfa;
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .welcome code {
+            background: #1e1f2a;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>labquery</h1>
+        <div class="status">
+            <div class="dot" id="status-dot"></div>
+            <span id="status-text">Connecting...</span>
+        </div>
+    </header>
+
+    <div id="messages">
+        <div class="welcome">
+            <h2>labquery</h2>
+            <p>Natural language interface for LIMS and liquid handler automation.</p>
+            <p style="margin-top: 12px;">
+                Try: <code>What can you tell me about sample BEYDTRK5K?</code><br>
+                or: <code>Do we have enough CEL samples for a 96-well plate run?</code>
+            </p>
+        </div>
+    </div>
+
+    <div id="input-area">
+        <input type="text" id="user-input" placeholder="Ask about samples, inventory, or protocols..." autofocus>
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+
+    <script>
+        const WS_PORT = location.port ? parseInt(location.port) - 1 : 8765;
+        const WS_URL = `ws://${location.hostname || '127.0.0.1'}:${WS_PORT}`;
+
+        let ws = null;
+        let currentBubble = null;
+        let currentToolIndicator = null;
+
+        function connect() {
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                document.getElementById('status-dot').classList.add('connected');
+                document.getElementById('status-text').textContent = 'Connected';
+                document.getElementById('send-btn').disabled = false;
+            };
+
+            ws.onclose = () => {
+                document.getElementById('status-dot').classList.remove('connected');
+                document.getElementById('status-text').textContent = 'Disconnected — reconnecting...';
+                document.getElementById('send-btn').disabled = true;
+                setTimeout(connect, 2000);
+            };
+
+            ws.onerror = () => {};
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                handleServerMessage(msg);
+            };
+        }
+
+        function handleServerMessage(msg) {
+            const messages = document.getElementById('messages');
+
+            switch (msg.type) {
+                case 'stream_start':
+                    currentBubble = document.createElement('div');
+                    currentBubble.className = 'message assistant';
+                    messages.appendChild(currentBubble);
+                    break;
+
+                case 'stream_delta':
+                    if (currentBubble) {
+                        currentBubble.textContent += msg.text;
+                        messages.scrollTop = messages.scrollHeight;
+                    }
+                    break;
+
+                case 'tool_call':
+                    currentToolIndicator = document.createElement('div');
+                    currentToolIndicator.className = 'message tool-indicator';
+                    const toolLabel = msg.tool.replace(/_/g, ' ');
+                    const inputSummary = Object.values(msg.input || {}).join(', ');
+                    currentToolIndicator.textContent = `[${toolLabel}] ${inputSummary}...`;
+                    messages.appendChild(currentToolIndicator);
+                    messages.scrollTop = messages.scrollHeight;
+                    // Clear the current text bubble so next stream_start creates a fresh one
+                    currentBubble = null;
+                    break;
+
+                case 'tool_result':
+                    if (currentToolIndicator) {
+                        currentToolIndicator.classList.add('done');
+                        currentToolIndicator.textContent = currentToolIndicator.textContent.replace('...', ' done');
+                    }
+                    break;
+
+                case 'stream_end':
+                    currentBubble = null;
+                    document.getElementById('send-btn').disabled = false;
+                    document.getElementById('user-input').disabled = false;
+                    document.getElementById('user-input').focus();
+                    break;
+
+                case 'error':
+                    const errBubble = document.createElement('div');
+                    errBubble.className = 'message assistant';
+                    errBubble.style.borderColor = '#ef4444';
+                    errBubble.textContent = `Error: ${msg.message}`;
+                    messages.appendChild(errBubble);
+                    break;
+            }
+
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('user-input');
+            const text = input.value.trim();
+            if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+            // Remove welcome message
+            const welcome = document.querySelector('.welcome');
+            if (welcome) welcome.remove();
+
+            // Add user bubble
+            const messages = document.getElementById('messages');
+            const bubble = document.createElement('div');
+            bubble.className = 'message user';
+            bubble.textContent = text;
+            messages.appendChild(bubble);
+            messages.scrollTop = messages.scrollHeight;
+
+            // Send to server
+            ws.send(JSON.stringify({ type: 'message', text: text }));
+
+            // Disable input while processing
+            input.value = '';
+            input.disabled = true;
+            document.getElementById('send-btn').disabled = true;
+        }
+
+        document.getElementById('user-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        connect();
+    </script>
+</body>
+</html>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 
 from dotenv import load_dotenv
@@ -26,6 +27,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         default="claude-haiku-4-5-20251001",
         help="Claude model to use (default: claude-haiku-4-5-20251001)",
+    )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start WebSocket chat server instead of CLI",
+    )
+    parser.add_argument(
+        "--ws-port",
+        type=int,
+        default=8765,
+        help="WebSocket server port (default: 8765)",
+    )
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=8080,
+        help="HTTP server port for chat UI (default: 8080)",
+    )
+    parser.add_argument(
+        "--visualizer",
+        action="store_true",
+        help="Enable PLR deck visualizer (browser-based)",
     )
     parser.add_argument(
         "query",
@@ -60,6 +83,27 @@ def run_interactive(nl: NLLayer) -> None:
             print(f"\nError: {e}\n", file=sys.stderr)
 
 
+async def run_serve(args, lims, plr) -> None:
+    """Start the WebSocket chat server, optionally with PLR visualizer."""
+    if args.visualizer:
+        await plr.setup()
+
+    from labquery.ws_server import ChatServer
+
+    server = ChatServer(
+        lims=lims,
+        plr=plr,
+        model=args.model,
+        ws_port=args.ws_port,
+        http_port=args.http_port,
+    )
+    try:
+        await server.start()
+    finally:
+        if args.visualizer:
+            await plr.teardown()
+
+
 def main() -> None:
     load_dotenv()
 
@@ -67,13 +111,19 @@ def main() -> None:
     args = parser.parse_args()
 
     lims = LabioAllClient(base_url=args.lims_url)
-    plr = PLRRunner(use_simulator=True)
-    nl = NLLayer(lims=lims, plr=plr, model=args.model)
+    plr = PLRRunner(
+        use_simulator=True,
+        enable_visualizer=args.visualizer,
+    )
 
-    if args.query:
+    if args.serve:
+        asyncio.run(run_serve(args, lims, plr))
+    elif args.query:
+        nl = NLLayer(lims=lims, plr=plr, model=args.model)
         response = nl.query(args.query)
         print(response)
     else:
+        nl = NLLayer(lims=lims, plr=plr, model=args.model)
         run_interactive(nl)
 
 

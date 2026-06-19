@@ -1,11 +1,13 @@
 """PyLabRobot protocol execution layer.
 
-Translates parsed protocol commands into PLR liquid handler actions and
-executes them on the simulator (or real hardware when configured).
+Translates parsed protocol commands into PLR liquid handler actions.
+When setup() has been called, delegates to PLRBridge for real simulator
+execution. Otherwise falls back to simulated math (no PLR dependency).
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -25,11 +27,6 @@ class ProtocolResult:
     started_at: datetime = field(default_factory=datetime.now)
     completed_at: datetime | None = None
 
-
-# ---- Protocol registry ----
-# Each protocol is a function that takes a list of samples and returns
-# a volume-consumed map. In Phase 2 these will drive real PLR commands;
-# for now they return simulated results.
 
 PROTOCOL_REGISTRY: dict[str, dict] = {
     "cel_dna_combination": {
@@ -65,24 +62,54 @@ def _resolve_protocol(name: str) -> tuple[str, dict] | None:
 class PLRRunner:
     """Executes protocols via PyLabRobot.
 
-    In Phase 1 (current), this uses simulated execution — no hardware or
-    PLR simulator process required. In Phase 2, this will be wired to a
-    real PLR LiquidHandler instance with SimulatorBackend or a hardware backend.
+    Call setup() to enable real PLR simulator execution. Without setup(),
+    protocols run as simulated math — no PLR imports required.
     """
 
-    def __init__(self, use_simulator: bool = True):
+    def __init__(self, use_simulator: bool = True, enable_visualizer: bool = False):
         self.use_simulator = use_simulator
-        self._lh = None  # Will hold a PLR LiquidHandler in Phase 2
+        self._enable_visualizer = enable_visualizer
+        self._bridge = None
+
+    @property
+    def bridge_ready(self) -> bool:
+        return self._bridge is not None and self._bridge.ready
+
+    async def setup(self) -> None:
+        """Initialize the PLR bridge with simulator backend."""
+        from labquery.plr_bridge import PLRBridge
+        self._bridge = PLRBridge(enable_visualizer=self._enable_visualizer)
+        await self._bridge.setup()
+
+    async def teardown(self) -> None:
+        if self._bridge:
+            await self._bridge.teardown()
+            self._bridge = None
 
     def run_protocol(
         self,
         protocol_name: str,
         samples: list[Sample],
     ) -> ProtocolResult:
-        """Execute a protocol on the given samples.
+        """Execute a protocol. Uses PLR bridge if set up, otherwise simulates."""
+        if self.bridge_ready:
+            return asyncio.run(self.run_protocol_async(protocol_name, samples))
+        return self._run_simulated(protocol_name, samples)
 
-        Returns a ProtocolResult with run metadata and per-sample volume consumed.
-        """
+    async def run_protocol_async(
+        self,
+        protocol_name: str,
+        samples: list[Sample],
+    ) -> ProtocolResult:
+        """Async protocol execution for use within an event loop (e.g. WebSocket server)."""
+        if self.bridge_ready:
+            return await self._bridge.execute_protocol(protocol_name, samples)
+        return self._run_simulated(protocol_name, samples)
+
+    def _run_simulated(
+        self, protocol_name: str, samples: list[Sample]
+    ) -> ProtocolResult:
+        """Simulated execution — just math, no PLR dependency."""
         resolved = _resolve_protocol(protocol_name)
         if resolved is None:
             return ProtocolResult(
@@ -90,7 +117,6 @@ class PLRRunner:
                 protocol_name=protocol_name,
                 status="error",
                 estimated_minutes=0,
-                volumes_consumed={},
             )
 
         key, proto = resolved
@@ -98,7 +124,6 @@ class PLRRunner:
         vol_per_sample = proto["volume_per_sample_ul"]
         est_minutes = proto["estimated_minutes_per_sample"] * len(samples)
 
-        volumes_consumed = {}
         for sample in samples:
             if sample.volume_ul < vol_per_sample:
                 return ProtocolResult(
@@ -106,12 +131,9 @@ class PLRRunner:
                     protocol_name=key,
                     status="error_insufficient_volume",
                     estimated_minutes=0,
-                    volumes_consumed={},
                 )
-            volumes_consumed[sample.sample_id] = vol_per_sample
 
-        # Phase 2: replace this block with actual PLR commands
-        # lh.aspirate(...), lh.dispense(...), etc.
+        volumes_consumed = {s.sample_id: vol_per_sample for s in samples}
 
         return ProtocolResult(
             run_id=run_id,

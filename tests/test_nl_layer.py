@@ -52,26 +52,26 @@ def nl(lims: FakeLIMSClient) -> NLLayer:
 
 class TestDispatchQuerySample:
     def test_existing_sample(self, nl: NLLayer):
-        result = json.loads(nl._dispatch("query_sample_status", {"sample_id": "C6OT0FN3S"}))
+        result = json.loads(nl.dispatcher.dispatch("query_sample_status", {"sample_id": "C6OT0FN3S"}))
         assert result["sample_id"] == "C6OT0FN3S"
         assert result["material_type"] == "CEL"
         assert result["volume_ul"] == 450.0
         assert result["labware_vendor"] == "epitube"
 
     def test_missing_sample(self, nl: NLLayer):
-        result = json.loads(nl._dispatch("query_sample_status", {"sample_id": "NOPE"}))
+        result = json.loads(nl.dispatcher.dispatch("query_sample_status", {"sample_id": "NOPE"}))
         assert "error" in result
 
 
 class TestDispatchCheckInventory:
     def test_count_by_type(self, nl: NLLayer):
-        result = json.loads(nl._dispatch("check_inventory", {"sample_type": "CEL"}))
+        result = json.loads(nl.dispatcher.dispatch("check_inventory", {"sample_type": "CEL"}))
         assert result["available_count"] == 1  # only 1 CEL has >= 50ul
         assert result["sample_type"] == "CEL"
 
     def test_with_required_count(self, nl: NLLayer):
         result = json.loads(
-            nl._dispatch("check_inventory", {"sample_type": "CEL", "required_count": 5})
+            nl.dispatcher.dispatch("check_inventory", {"sample_type": "CEL", "required_count": 5})
         )
         assert result["sufficient"] is False
         assert result["shortfall"] == 4
@@ -80,7 +80,7 @@ class TestDispatchCheckInventory:
 class TestDispatchRunProtocol:
     def test_successful_run(self, nl: NLLayer):
         result = json.loads(
-            nl._dispatch(
+            nl.dispatcher.dispatch(
                 "run_protocol",
                 {"protocol_name": "cel/dna", "sample_ids": ["C6OT0FN3S"]},
             )
@@ -90,7 +90,7 @@ class TestDispatchRunProtocol:
 
     def test_missing_sample_in_run(self, nl: NLLayer):
         result = json.loads(
-            nl._dispatch(
+            nl.dispatcher.dispatch(
                 "run_protocol",
                 {"protocol_name": "cel/dna", "sample_ids": ["NONEXISTENT"]},
             )
@@ -98,7 +98,7 @@ class TestDispatchRunProtocol:
         assert "error" in result
 
     def test_volume_updated_after_run(self, nl: NLLayer, lims: FakeLIMSClient):
-        nl._dispatch(
+        nl.dispatcher.dispatch(
             "run_protocol",
             {"protocol_name": "cel/dna", "sample_ids": ["C6OT0FN3S"]},
         )
@@ -108,16 +108,16 @@ class TestDispatchRunProtocol:
 
 class TestDispatchListSampleIds:
     def test_returns_ids(self, nl: NLLayer):
-        result = json.loads(nl._dispatch("list_sample_ids", {}))
+        result = json.loads(nl.dispatcher.dispatch("list_sample_ids", {}))
         assert result["total_count"] == 2
         assert "C6OT0FN3S" in result["sample_ids"]
 
     def test_limit(self, nl: NLLayer):
-        result = json.loads(nl._dispatch("list_sample_ids", {"limit": 1}))
+        result = json.loads(nl.dispatcher.dispatch("list_sample_ids", {"limit": 1}))
         assert len(result["sample_ids"]) == 1
 
 
 class TestDispatchUnknownTool:
     def test_unknown_tool(self, nl: NLLayer):
-        result = json.loads(nl._dispatch("nonexistent_tool", {}))
+        result = json.loads(nl.dispatcher.dispatch("nonexistent_tool", {}))
         assert "error" in result
