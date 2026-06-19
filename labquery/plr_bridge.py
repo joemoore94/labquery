@@ -45,6 +45,7 @@ class PLRBridge:
         self._tip_rack_2: object = None
         self._tube_rack: object = None
         self._plate: object = None
+        self._trash: object = None
         self._tip_index: int = 0
         self._ready = False
 
@@ -68,6 +69,8 @@ class PLRBridge:
         deck.assign_child_at_slot(self._plate, 2)
         deck.assign_child_at_slot(self._tip_rack, 10)
         deck.assign_child_at_slot(self._tip_rack_2, 11)
+
+        self._trash = deck.get_trash_area()
 
         await self._lh.setup()
 
@@ -178,7 +181,7 @@ class PLRBridge:
             await self._lh.pick_up_tips(tip_spot)
             await self._lh.aspirate([tube], vols=[vol_per_sample])
             await self._lh.dispense(well, vols=[vol_per_sample])
-            await self._lh.drop_tips(tip_spot)
+            await self._lh.drop_tips([self._trash])
 
             sample_id = tube.name.removeprefix("tube_")
             volumes_consumed[sample_id] = vol_per_sample
