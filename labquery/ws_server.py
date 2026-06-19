@@ -131,6 +131,8 @@ class ChatServer:
 
                 if msg.get("type") == "message" and msg.get("text"):
                     await self._stream_response(session, websocket, msg["text"])
+        except websockets.exceptions.ConnectionClosed:
+            pass
         finally:
             self._sessions.pop(session_id, None)
 
