@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import http.server
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -23,6 +24,8 @@ from labquery.plr_runner import PLRRunner
 from labquery.tools import SYSTEM_PROMPT, TOOLS
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+log = logging.getLogger("labquery")
 
 
 class ChatSession:
@@ -58,7 +61,6 @@ class ChatServer:
     async def start(self) -> None:
         load_dotenv()
 
-        # Bind WebSocket first so self.ws_port is finalized before HTTP serves config.json
         for port in range(self.ws_port, self.ws_port + 10):
             try:
                 ws_server = await websockets.serve(
@@ -118,6 +120,7 @@ class ChatServer:
         dispatcher = ToolDispatcher(self.lims, self.plr)
         session = ChatSession(dispatcher=dispatcher, model=self.model)
         self._sessions[session_id] = session
+        log.info("Client connected (session %s)", session_id)
 
         try:
             async for raw in websocket:
@@ -130,9 +133,12 @@ class ChatServer:
                     continue
 
                 if msg.get("type") == "message" and msg.get("text"):
+                    log.info("User: %s", msg["text"])
                     await self._stream_response(session, websocket, msg["text"])
         except websockets.exceptions.ConnectionClosed:
-            pass
+            log.info("Client disconnected (session %s)", session_id)
+        except Exception:
+            log.exception("Connection error (session %s)", session_id)
         finally:
             self._sessions.pop(session_id, None)
 
@@ -147,24 +153,34 @@ class ChatServer:
             collected_content = []
             stop_reason = None
 
-            async with session.client.messages.stream(
-                model=session.model,
-                max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=session.conversation.to_api_messages(),
-            ) as stream:
-                async for event in stream:
-                    if hasattr(event, "type") and event.type == "content_block_delta":
-                        if hasattr(event.delta, "text"):
-                            await websocket.send(json.dumps({
-                                "type": "stream_delta",
-                                "text": event.delta.text,
-                            }))
+            try:
+                async with session.client.messages.stream(
+                    model=session.model,
+                    max_tokens=1024,
+                    system=SYSTEM_PROMPT,
+                    tools=TOOLS,
+                    messages=session.conversation.to_api_messages(),
+                ) as stream:
+                    async for event in stream:
+                        if hasattr(event, "type") and event.type == "content_block_delta":
+                            if hasattr(event.delta, "text"):
+                                await websocket.send(json.dumps({
+                                    "type": "stream_delta",
+                                    "text": event.delta.text,
+                                }))
 
-                final = await stream.get_final_message()
-                collected_content = final.content
-                stop_reason = final.stop_reason
+                    final = await stream.get_final_message()
+                    collected_content = final.content
+                    stop_reason = final.stop_reason
+            except Exception:
+                log.exception("Claude API error")
+                await websocket.send(json.dumps({
+                    "type": "error",
+                    "message": "Failed to get response from Claude. Check server logs.",
+                }))
+                return
+
+            log.info("Stop reason: %s, content blocks: %d", stop_reason, len(collected_content))
 
             if stop_reason == "tool_use":
                 session.conversation.add_assistant(
@@ -172,6 +188,8 @@ class ChatServer:
                 )
                 for block in collected_content:
                     if block.type == "tool_use":
+                        log.info("Tool call: %s(%s)", block.name, json.dumps(block.input)[:200])
+
                         await websocket.send(json.dumps({
                             "type": "tool_call",
                             "tool": block.name,
@@ -187,6 +205,8 @@ class ChatServer:
                                 block.name, block.input
                             )
 
+                        log.info("Tool result: %s -> %s", block.name, result[:200])
+
                         await websocket.send(json.dumps({
                             "type": "tool_result",
                             "tool": block.name,
@@ -198,6 +218,7 @@ class ChatServer:
                 for block in collected_content:
                     if hasattr(block, "text"):
                         full_text += block.text
+                log.info("Response: %s", full_text[:200] if full_text else "(empty)")
                 session.conversation.add_assistant(full_text)
                 await websocket.send(json.dumps({
                     "type": "stream_end",

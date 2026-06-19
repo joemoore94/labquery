@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 
 from dotenv import load_dotenv
@@ -49,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--visualizer",
         action="store_true",
         help="Enable PLR deck visualizer (browser-based)",
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable verbose logging",
     )
     parser.add_argument(
         "query",
@@ -109,6 +115,12 @@ def main() -> None:
 
     parser = build_parser()
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     lims = LabioAllClient(base_url=args.lims_url)
     plr = PLRRunner(
