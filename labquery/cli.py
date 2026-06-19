@@ -117,7 +117,10 @@ def main() -> None:
     )
 
     if args.serve:
-        asyncio.run(run_serve(args, lims, plr))
+        try:
+            asyncio.run(run_serve(args, lims, plr))
+        except KeyboardInterrupt:
+            print("\nShutting down.")
     elif args.query:
         nl = NLLayer(lims=lims, plr=plr, model=args.model)
         response = nl.query(args.query)
