@@ -7,9 +7,7 @@ fed back to Claude -> natural language response to user.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
-from datetime import datetime
 
 import anthropic
 
@@ -59,7 +57,7 @@ class NLLayer:
         self,
         lims: LIMSClient,
         plr: PLRRunner,
-        model: str = "claude-sonnet-4-6",
+        model: str = "claude-haiku-4-5-20251001",
     ):
         self.lims = lims
         self.plr = plr
@@ -68,10 +66,6 @@ class NLLayer:
         self.conversation = Conversation()
 
     def query(self, user_input: str) -> str:
-        """Process a user query through the full tool-use loop.
-
-        Returns the final natural language response.
-        """
         self.conversation.add_user(user_input)
 
         while True:
@@ -97,12 +91,11 @@ class NLLayer:
                 return text
 
     def _dispatch(self, tool_name: str, tool_input: dict) -> str:
-        """Route a tool call to the appropriate handler and return the result as a string."""
         handlers = {
             "query_sample_status": self._handle_query_sample,
             "check_inventory": self._handle_check_inventory,
             "run_protocol": self._handle_run_protocol,
-            "get_run_history": self._handle_get_run_history,
+            "list_sample_ids": self._handle_list_sample_ids,
         }
 
         handler = handlers.get(tool_name)
@@ -120,12 +113,14 @@ class NLLayer:
             return json.dumps({"error": f"Sample {inp['sample_id']} not found"})
         return json.dumps({
             "sample_id": sample.sample_id,
-            "sample_type": sample.sample_type,
-            "location_rack": sample.location_rack,
-            "location_position": sample.location_position,
+            "material_type": sample.material_type,
             "volume_ul": sample.volume_ul,
-            "status": sample.status,
-            "last_modified": sample.last_modified.isoformat() if sample.last_modified else None,
+            "concentration": sample.concentration,
+            "concentration_unit": sample.concentration_unit,
+            "labware_vendor": sample.labware_vendor,
+            "labware_catalog": sample.labware_catalog,
+            "sequence_url": sample.sequence_url,
+            "created": sample.created.isoformat() if sample.created else None,
         })
 
     def _handle_check_inventory(self, inp: dict) -> str:
@@ -168,7 +163,7 @@ class NLLayer:
         for sid, consumed_ul in result.volumes_consumed.items():
             s = self.lims.get_sample(sid)
             if s:
-                self.lims.update_sample(sid, volume_ul=s.volume_ul - consumed_ul)
+                self.lims.update_sample_volume(sid, s.volume_ul - consumed_ul)
 
         return json.dumps({
             "run_id": result.run_id,
@@ -178,20 +173,13 @@ class NLLayer:
             "volumes_consumed": result.volumes_consumed,
         })
 
-    def _handle_get_run_history(self, inp: dict) -> str:
-        runs = self.lims.get_run_history(
-            inp["sample_id"], days_back=inp.get("days_back", 7)
-        )
-        return json.dumps([
-            {
-                "run_id": r.run_id,
-                "protocol_name": r.protocol_name,
-                "started_at": r.started_at.isoformat(),
-                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-                "status": r.status,
-            }
-            for r in runs
-        ])
+    def _handle_list_sample_ids(self, inp: dict) -> str:
+        ids = self.lims.list_sample_ids()
+        limit = inp.get("limit", 50)
+        return json.dumps({
+            "total_count": len(ids),
+            "sample_ids": ids[:limit],
+        })
 
     @staticmethod
     def _extract_text(response) -> str:

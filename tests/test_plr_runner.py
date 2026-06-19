@@ -11,11 +11,11 @@ from labquery.plr_runner import PLRRunner, _resolve_protocol
 def _make_sample(sample_id: str = "TEST-001", volume_ul: float = 500.0) -> Sample:
     return Sample(
         sample_id=sample_id,
-        sample_type="CEL",
-        location_rack="Rack 1",
-        location_position="A1",
+        material_type="CEL",
         volume_ul=volume_ul,
-        status="available",
+        concentration=5.0,
+        labware_vendor="epitube",
+        labware_catalog="0030123611",
     )
 
 
@@ -50,7 +50,7 @@ class TestPLRRunner:
         assert len(result.volumes_consumed) == 2
         assert result.volumes_consumed["S1"] == 25.0
         assert result.volumes_consumed["S2"] == 25.0
-        assert result.estimated_minutes == 3.0  # 1.5 * 2
+        assert result.estimated_minutes == 3.0
 
     def test_unknown_protocol(self):
         runner = PLRRunner()

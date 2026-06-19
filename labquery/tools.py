@@ -1,15 +1,15 @@
 """Claude tool definitions for the labquery NL interface.
 
 Each tool maps to a real action the system can take: querying the LIMS,
-checking inventory, running protocols, or retrieving run history.
+checking inventory, or running protocols.
 """
 
 TOOLS = [
     {
         "name": "query_sample_status",
         "description": (
-            "Look up the current location, volume, and status of a sample in the LIMS. "
-            "Use this when the user asks where a sample is, what state it's in, or how much volume remains."
+            "Look up the current volume, material type, concentration, and labware "
+            "for a sample in the LIMS. Use this when the user asks about a specific sample."
         ),
         "input_schema": {
             "type": "object",
@@ -25,7 +25,7 @@ TOOLS = [
     {
         "name": "check_inventory",
         "description": (
-            "Check how many samples of a given type are available with sufficient volume for a run. "
+            "Check how many samples of a given material type are available with sufficient volume. "
             "Use this when the user asks if there are enough samples, how many are available, "
             "or whether a plate run is feasible."
         ),
@@ -34,11 +34,11 @@ TOOLS = [
             "properties": {
                 "sample_type": {
                     "type": "string",
-                    "description": "The material type to check, e.g. CEL, DNA, BAC, PRO",
+                    "description": "The material type to check: CEL, DNA, BAC, or PRO",
                 },
                 "min_volume_ul": {
                     "type": "number",
-                    "description": "Minimum volume in microliters a sample must have to be counted as available",
+                    "description": "Minimum volume in microliters a sample must have to count as available",
                     "default": 50,
                 },
                 "required_count": {
@@ -72,25 +72,20 @@ TOOLS = [
         },
     },
     {
-        "name": "get_run_history",
+        "name": "list_sample_ids",
         "description": (
-            "Retrieve the history of protocol runs that involved a specific sample. "
-            "Use this when the user asks what happened to a sample, its provenance, or past runs."
+            "List all sample IDs in the LIMS. Use this when the user wants to browse "
+            "available samples or needs to find sample IDs."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "sample_id": {
-                    "type": "string",
-                    "description": "The sample ID to look up history for",
-                },
-                "days_back": {
+                "limit": {
                     "type": "integer",
-                    "description": "How many days of history to retrieve",
-                    "default": 7,
+                    "description": "Maximum number of IDs to return (default 50)",
+                    "default": 50,
                 },
             },
-            "required": ["sample_id"],
         },
     },
 ]
@@ -99,10 +94,11 @@ SYSTEM_PROMPT = (
     "You are labquery, a natural language assistant for pharmaceutical lab automation. "
     "You help scientists query their LIMS (Laboratory Information Management System) "
     "and control liquid handlers via PyLabRobot.\n\n"
-    "When a user asks about samples, inventory, protocols, or run history, use the "
-    "available tools to look up real data and take real actions. Always respond in "
-    "clear, concise language a bench scientist would understand.\n\n"
-    "If a query is ambiguous, ask for clarification rather than guessing. "
-    "For destructive actions (running protocols, modifying samples), confirm with the "
-    "user before proceeding."
+    "The LIMS contains ~10,000 samples with material types: CEL, DNA, BAC, PRO. "
+    "Each sample has a volume (uL), concentration (mg/ml), labware info, and a "
+    "sequence URL.\n\n"
+    "When a user asks about samples, inventory, or protocols, use the available tools "
+    "to look up real data. Respond in clear, concise language a bench scientist would "
+    "understand.\n\n"
+    "For destructive actions (running protocols), confirm with the user before proceeding."
 )

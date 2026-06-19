@@ -6,11 +6,11 @@ Tests the tool dispatch and result formatting without making real API calls.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 
-from labquery.lims_client import RunRecord, Sample
+from labquery.lims_client import Sample
 from labquery.nl_layer import NLLayer
 from labquery.plr_runner import PLRRunner
 from tests.test_lims_client import FakeLIMSClient
@@ -22,31 +22,22 @@ def lims() -> FakeLIMSClient:
     client.seed_sample(
         Sample(
             sample_id="C6OT0FN3S",
-            sample_type="CEL",
-            location_rack="Rack 3",
-            location_position="A4",
+            material_type="CEL",
             volume_ul=450.0,
-            status="available",
-            last_modified=datetime(2026, 6, 18, 14, 22),
+            concentration=5.2,
+            labware_vendor="epitube",
+            labware_catalog="0030123611",
+            created=datetime(2026, 6, 18, 14, 22),
         )
     )
     client.seed_sample(
         Sample(
             sample_id="D7PP1QR4T",
-            sample_type="DNA",
-            location_rack="Rack 1",
-            location_position="B2",
+            material_type="DNA",
             volume_ul=200.0,
-            status="available",
-        )
-    )
-    client.seed_run(
-        RunRecord(
-            run_id="RUN-0042",
-            protocol_name="cel_dna_combination",
-            sample_ids=["C6OT0FN3S"],
-            started_at=datetime.now() - timedelta(days=2),
-            status="completed",
+            concentration=3.1,
+            labware_vendor="azenta",
+            labware_catalog="68-1003-10",
         )
     )
     return client
@@ -63,9 +54,9 @@ class TestDispatchQuerySample:
     def test_existing_sample(self, nl: NLLayer):
         result = json.loads(nl._dispatch("query_sample_status", {"sample_id": "C6OT0FN3S"}))
         assert result["sample_id"] == "C6OT0FN3S"
-        assert result["sample_type"] == "CEL"
+        assert result["material_type"] == "CEL"
         assert result["volume_ul"] == 450.0
-        assert result["location_rack"] == "Rack 3"
+        assert result["labware_vendor"] == "epitube"
 
     def test_missing_sample(self, nl: NLLayer):
         result = json.loads(nl._dispatch("query_sample_status", {"sample_id": "NOPE"}))
@@ -75,7 +66,7 @@ class TestDispatchQuerySample:
 class TestDispatchCheckInventory:
     def test_count_by_type(self, nl: NLLayer):
         result = json.loads(nl._dispatch("check_inventory", {"sample_type": "CEL"}))
-        assert result["available_count"] == 1  # only 1 has >= 50ul
+        assert result["available_count"] == 1  # only 1 CEL has >= 50ul
         assert result["sample_type"] == "CEL"
 
     def test_with_required_count(self, nl: NLLayer):
@@ -115,19 +106,15 @@ class TestDispatchRunProtocol:
         assert sample.volume_ul == 425.0  # 450 - 25
 
 
-class TestDispatchRunHistory:
-    def test_returns_history(self, nl: NLLayer):
-        result = json.loads(
-            nl._dispatch("get_run_history", {"sample_id": "C6OT0FN3S"})
-        )
-        assert len(result) == 1
-        assert result[0]["run_id"] == "RUN-0042"
+class TestDispatchListSampleIds:
+    def test_returns_ids(self, nl: NLLayer):
+        result = json.loads(nl._dispatch("list_sample_ids", {}))
+        assert result["total_count"] == 2
+        assert "C6OT0FN3S" in result["sample_ids"]
 
-    def test_no_history(self, nl: NLLayer):
-        result = json.loads(
-            nl._dispatch("get_run_history", {"sample_id": "D7PP1QR4T"})
-        )
-        assert result == []
+    def test_limit(self, nl: NLLayer):
+        result = json.loads(nl._dispatch("list_sample_ids", {"limit": 1}))
+        assert len(result["sample_ids"]) == 1
 
 
 class TestDispatchUnknownTool:

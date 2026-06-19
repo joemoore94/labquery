@@ -20,12 +20,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lims-url",
         default=None,
-        help="Base URL for the LIMS API (default: $LABIO_URL or http://localhost:8000)",
+        help="Base URL for the LIMS API (default: $LABIO_URL or http://127.0.0.1:5001)",
     )
     parser.add_argument(
         "--model",
-        default="claude-sonnet-4-6",
-        help="Claude model to use (default: claude-sonnet-4-6)",
+        default="claude-haiku-4-5-20251001",
+        help="Claude model to use (default: claude-haiku-4-5-20251001)",
     )
     parser.add_argument(
         "query",
