@@ -145,6 +145,25 @@ class PLRBridge:
             completed_at=datetime.now(),
         )
 
+    def get_deck_status(self) -> dict:
+        """Return current state of the deck: tip counts, plate usage, etc."""
+        if not self._ready:
+            return {"error": "PLR bridge not set up"}
+
+        def count_tips(rack) -> dict:
+            total = len(rack.children)
+            remaining = sum(1 for s in rack.children if s.has_tip)
+            return {"total": total, "remaining": remaining, "used": total - remaining}
+
+        return {
+            "tip_rack_1": count_tips(self._tip_rack),
+            "tip_rack_2": count_tips(self._tip_rack_2),
+            "tips_total_remaining": (
+                count_tips(self._tip_rack)["remaining"]
+                + count_tips(self._tip_rack_2)["remaining"]
+            ),
+        }
+
     def _place_samples(self, samples: list[Sample]) -> list[Tube]:
         """Map samples to tube rack positions and set initial volumes."""
         tubes = []

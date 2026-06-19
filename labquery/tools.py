@@ -88,6 +88,18 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "get_deck_status",
+        "description": (
+            "Check the current status of the liquid handler deck: how many tips remain "
+            "in each rack, total tips available. Use this when the user asks about tips, "
+            "deck status, or consumables."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 SYSTEM_PROMPT = (

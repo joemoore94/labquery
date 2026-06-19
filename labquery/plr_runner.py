@@ -145,6 +145,12 @@ class PLRRunner:
             completed_at=datetime.now(),
         )
 
+    def get_deck_status(self) -> dict | None:
+        """Return deck status from the PLR bridge, or None if not set up."""
+        if self.bridge_ready:
+            return self._bridge.get_deck_status()
+        return None
+
     def list_protocols(self) -> list[dict]:
         """Return available protocols and their descriptions."""
         return [

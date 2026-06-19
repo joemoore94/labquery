@@ -67,6 +67,7 @@ class ToolDispatcher:
             "check_inventory": self._handle_check_inventory,
             "run_protocol": self._handle_run_protocol,
             "list_sample_ids": self._handle_list_sample_ids,
+            "get_deck_status": self._handle_get_deck_status,
         }
 
         handler = handlers.get(tool_name)
@@ -143,6 +144,12 @@ class ToolDispatcher:
             "estimated_minutes": result.estimated_minutes,
             "volumes_consumed": result.volumes_consumed,
         })
+
+    def _handle_get_deck_status(self, inp: dict) -> str:
+        status = self.plr.get_deck_status()
+        if status is None:
+            return json.dumps({"error": "Liquid handler not active. Start with --visualizer to enable deck tracking."})
+        return json.dumps(status)
 
     def _handle_list_sample_ids(self, inp: dict) -> str:
         ids = self.lims.list_sample_ids()
