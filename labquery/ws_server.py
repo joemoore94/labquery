@@ -57,27 +57,31 @@ class ChatServer:
 
     async def start(self) -> None:
         load_dotenv()
+
+        # Bind WebSocket first so self.ws_port is finalized before HTTP serves config.json
+        for port in range(self.ws_port, self.ws_port + 10):
+            try:
+                ws_server = await websockets.serve(
+                    self._handle_connection, self.host, port
+                )
+                self.ws_port = port
+                break
+            except OSError:
+                continue
+        else:
+            raise OSError(f"Could not find a free WebSocket port in range {self.ws_port}-{self.ws_port + 9}")
+
         self._start_http_server()
         print(f"Chat UI:   http://{self.host}:{self.http_port}")
         print(f"WebSocket: ws://{self.host}:{self.ws_port}")
         print("Press Ctrl+C to stop.\n")
 
-        for port in range(self.ws_port, self.ws_port + 10):
-            try:
-                async with websockets.serve(
-                    self._handle_connection, self.host, port
-                ):
-                    self.ws_port = port
-                    await asyncio.Future()
-            except OSError:
-                continue
-
-        raise OSError(f"Could not find a free WebSocket port in range {self.ws_port}-{self.ws_port + 9}")
+        await asyncio.Future()
 
     def _start_http_server(self) -> None:
         """Start a static file server in a background thread."""
 
-        ws_port = self.ws_port
+        chat_server = self
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def __init__(self, *args, directory=None, **kwargs):
@@ -85,7 +89,7 @@ class ChatServer:
 
             def do_GET(self):
                 if self.path == "/config.json":
-                    config = json.dumps({"ws_port": ws_port}).encode()
+                    config = json.dumps({"ws_port": chat_server.ws_port}).encode()
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", len(config))
