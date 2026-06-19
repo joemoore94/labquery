@@ -21,6 +21,9 @@ venv/
 *.swp
 *.swo
 
+# Logs
+*.log
+
 # Claude Code
 CLAUDE.md
 

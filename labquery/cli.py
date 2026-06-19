@@ -116,10 +116,15 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.WARNING,
+        level=log_level,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.FileHandler("labquery.log"),
+            *([] if not args.verbose else [logging.StreamHandler()]),
+        ],
     )
 
     lims = LabioAllClient(base_url=args.lims_url)
