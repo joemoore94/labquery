@@ -184,15 +184,24 @@
     </div>
 
     <script>
-        const WS_PORT = location.port ? parseInt(location.port) - 1 : 8765;
-        const WS_URL = `ws://${location.hostname || '127.0.0.1'}:${WS_PORT}`;
-
         let ws = null;
         let currentBubble = null;
         let currentToolIndicator = null;
+        let wsUrl = null;
+
+        async function init() {
+            try {
+                const resp = await fetch('/config.json');
+                const config = await resp.json();
+                wsUrl = `ws://${location.hostname || '127.0.0.1'}:${config.ws_port}`;
+            } catch {
+                wsUrl = `ws://${location.hostname || '127.0.0.1'}:8765`;
+            }
+            connect();
+        }
 
         function connect() {
-            ws = new WebSocket(WS_URL);
+            ws = new WebSocket(wsUrl);
 
             ws.onopen = () => {
                 document.getElementById('status-dot').classList.add('connected');
@@ -303,7 +312,7 @@
             }
         });
 
-        connect();
+        init();
     </script>
 </body>
 </html>

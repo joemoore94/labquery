@@ -58,28 +58,56 @@ class ChatServer:
     async def start(self) -> None:
         load_dotenv()
         self._start_http_server()
-        print(f"Chat UI: http://{self.host}:{self.http_port}")
+        print(f"Chat UI:   http://{self.host}:{self.http_port}")
         print(f"WebSocket: ws://{self.host}:{self.ws_port}")
         print("Press Ctrl+C to stop.\n")
 
-        async with websockets.serve(
-            self._handle_connection, self.host, self.ws_port
-        ):
-            await asyncio.Future()
+        for port in range(self.ws_port, self.ws_port + 10):
+            try:
+                async with websockets.serve(
+                    self._handle_connection, self.host, port
+                ):
+                    self.ws_port = port
+                    await asyncio.Future()
+            except OSError:
+                continue
+
+        raise OSError(f"Could not find a free WebSocket port in range {self.ws_port}-{self.ws_port + 9}")
 
     def _start_http_server(self) -> None:
         """Start a static file server in a background thread."""
+
+        ws_port = self.ws_port
 
         class Handler(http.server.SimpleHTTPRequestHandler):
             def __init__(self, *args, directory=None, **kwargs):
                 super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
+            def do_GET(self):
+                if self.path == "/config.json":
+                    config = json.dumps({"ws_port": ws_port}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", len(config))
+                    self.end_headers()
+                    self.wfile.write(config)
+                    return
+                super().do_GET()
+
             def log_message(self, format, *args):
                 pass
 
-        server = http.server.HTTPServer((self.host, self.http_port), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
+        for port in range(self.http_port, self.http_port + 10):
+            try:
+                server = http.server.HTTPServer((self.host, port), Handler)
+                self.http_port = port
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                return
+            except OSError:
+                continue
+
+        raise OSError(f"Could not find a free port in range {self.http_port}-{self.http_port + 9}")
 
     async def _handle_connection(self, websocket) -> None:
         session_id = id(websocket)
