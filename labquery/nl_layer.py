@@ -188,7 +188,7 @@ class NLLayer:
 
             if response.stop_reason == "tool_use":
                 self.conversation.add_assistant(
-                    [block.model_dump() for block in response.content]
+                    [block.model_dump(exclude_none=True) for block in response.content]
                 )
                 for block in response.content:
                     if block.type == "tool_use":
@@ -228,7 +228,7 @@ class NLLayer:
 
             if stop_reason == "tool_use":
                 self.conversation.add_assistant(
-                    [block.model_dump() for block in collected_content]
+                    [block.model_dump(exclude_none=True) for block in collected_content]
                 )
                 for block in collected_content:
                     if block.type == "tool_use":

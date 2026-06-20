@@ -184,7 +184,7 @@ class ChatServer:
 
             if stop_reason == "tool_use":
                 session.conversation.add_assistant(
-                    [block.model_dump() for block in collected_content]
+                    [block.model_dump(exclude_none=True) for block in collected_content]
                 )
                 for block in collected_content:
                     if block.type == "tool_use":
