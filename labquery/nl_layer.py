@@ -67,6 +67,7 @@ class ToolDispatcher:
             "check_inventory": self._handle_check_inventory,
             "run_protocol": self._handle_run_protocol,
             "list_sample_ids": self._handle_list_sample_ids,
+            "list_protocols": self._handle_list_protocols,
             "get_deck_status": self._handle_get_deck_status,
         }
 
@@ -144,6 +145,9 @@ class ToolDispatcher:
             "estimated_minutes": result.estimated_minutes,
             "volumes_consumed": result.volumes_consumed,
         })
+
+    def _handle_list_protocols(self, inp: dict) -> str:
+        return json.dumps(self.plr.list_protocols())
 
     def _handle_get_deck_status(self, inp: dict) -> str:
         status = self.plr.get_deck_status()

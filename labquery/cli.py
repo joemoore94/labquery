@@ -126,6 +126,8 @@ def main() -> None:
             *([] if not args.verbose else [logging.StreamHandler()]),
         ],
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("websockets").setLevel(logging.WARNING)
 
     lims = LabioAllClient(base_url=args.lims_url)
     plr = PLRRunner(

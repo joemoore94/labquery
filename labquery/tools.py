@@ -89,6 +89,18 @@ TOOLS = [
         },
     },
     {
+        "name": "list_protocols",
+        "description": (
+            "List all available liquid handling protocols that can be run on the OT-2. "
+            "Use this before running a protocol to check what's available and what "
+            "volume each protocol consumes per sample."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
         "name": "get_deck_status",
         "description": (
             "Check the current status of the liquid handler deck: how many tips remain "
