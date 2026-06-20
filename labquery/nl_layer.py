@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import anthropic
 
 from labquery.lims_client import LIMSClient
+from labquery.measure import measure_well
 from labquery.plr_runner import PLRRunner
 from labquery.tools import SYSTEM_PROMPT, TOOLS
 
@@ -67,6 +68,7 @@ class ToolDispatcher:
             "check_inventory": self._handle_check_inventory,
             "run_protocol": self._handle_run_protocol,
             "list_sample_ids": self._handle_list_sample_ids,
+            "measure_well": self._handle_measure_well,
             "list_protocols": self._handle_list_protocols,
             "get_deck_status": self._handle_get_deck_status,
         }
@@ -145,6 +147,30 @@ class ToolDispatcher:
             "estimated_minutes": result.estimated_minutes,
             "volumes_consumed": result.volumes_consumed,
         })
+
+    def _handle_measure_well(self, inp: dict) -> str:
+        sample_ids = inp["sample_ids"]
+        volumes = inp["volumes"]
+
+        for sid in sample_ids:
+            sample = self.lims.get_sample(sid)
+            if sample is None:
+                return json.dumps({"error": f"Sample {sid} not found"})
+            if sample.material_type == "BAC":
+                return json.dumps({
+                    "error": f"Sample {sid} is BAC type — incompatible with plate reader. "
+                    "BAC samples will damage the machine."
+                })
+            if sample.material_type == "PRO":
+                return json.dumps({
+                    "error": f"Sample {sid} is PRO type — incompatible with plate reader. "
+                    "PRO samples will put the reader in service mode."
+                })
+
+        result = measure_well(sample_ids, volumes)
+        if result.error:
+            return json.dumps({"error": result.error})
+        return json.dumps({"measurement": result.value, "unit": "midi-chlorian signal"})
 
     def _handle_list_protocols(self, inp: dict) -> str:
         return json.dumps(self.plr.list_protocols())

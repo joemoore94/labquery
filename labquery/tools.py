@@ -89,6 +89,32 @@ TOOLS = [
         },
     },
     {
+        "name": "measure_well",
+        "description": (
+            "Run a plate reader measurement on a well containing one or more samples. "
+            "Takes sample IDs and volumes, returns a midi-chlorian signal reading. "
+            "WARNING: Only CEL and DNA samples are compatible — BAC samples will damage "
+            "the plate reader, and PRO samples will put it in service mode. Always check "
+            "sample types before measuring."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sample_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Sample IDs in the well",
+                },
+                "volumes": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "description": "Volume in uL of each sample added to the well",
+                },
+            },
+            "required": ["sample_ids", "volumes"],
+        },
+    },
+    {
         "name": "list_protocols",
         "description": (
             "List all available liquid handling protocols that can be run on the OT-2. "
@@ -116,16 +142,20 @@ TOOLS = [
 
 SYSTEM_PROMPT = (
     "You are labquery, a natural language assistant for pharmaceutical lab automation. "
-    "You help scientists query their LIMS (Laboratory Information Management System) "
-    "and control liquid handlers via PyLabRobot.\n\n"
-    "You have access to two systems:\n"
+    "You help scientists query their LIMS (Laboratory Information Management System), "
+    "control liquid handlers via PyLabRobot, and run plate reader measurements.\n\n"
+    "You have access to three systems:\n"
     "- LIMS: tracks ~10,000 samples with material types (CEL, DNA, BAC, PRO), "
     "volumes (uL), concentrations (mg/ml), labware info, and sequence URLs.\n"
     "- Liquid handler (PyLabRobot): an OT-2 simulator with a tube rack, destination "
-    "plate, and two 96-tip racks. You can check deck status including tip counts.\n\n"
+    "plate, and two 96-tip racks. You can check deck status including tip counts.\n"
+    "- Plate reader: measures midi-chlorian signal from well contents. ONLY CEL and DNA "
+    "samples are compatible. BAC samples BREAK the reader. PRO samples put it in service "
+    "mode. Always verify sample types before measuring.\n\n"
     "When a user asks about samples or inventory, query the LIMS. When they ask about "
     "tips, deck status, or consumables, check the liquid handler. Use the available "
     "tools to look up real data. Respond in clear, concise language a bench scientist "
     "would understand.\n\n"
-    "For destructive actions (running protocols), confirm with the user before proceeding."
+    "For destructive actions (running protocols, measurements), confirm with the user "
+    "before proceeding."
 )
