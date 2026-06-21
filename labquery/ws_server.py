@@ -19,7 +19,7 @@ import websockets
 from dotenv import load_dotenv
 
 from labquery.lims_client import LIMSClient
-from labquery.nl_layer import Conversation, ToolDispatcher
+from labquery.nl_layer import MAX_TOOL_ITERATIONS, Conversation, ToolDispatcher
 from labquery.plr_runner import PLRRunner
 from labquery.tools import SYSTEM_PROMPT, TOOLS
 
@@ -147,7 +147,7 @@ class ChatServer:
     ) -> None:
         session.conversation.add_user(user_input)
 
-        while True:
+        for _ in range(MAX_TOOL_ITERATIONS):
             await websocket.send(json.dumps({"type": "stream_start"}))
 
             collected_content = []
@@ -196,14 +196,9 @@ class ChatServer:
                             "input": block.input,
                         }))
 
-                        if block.name == "run_protocol" and self.plr.bridge_ready:
-                            result = await self._dispatch_async(
-                                session.dispatcher, block.name, block.input
-                            )
-                        else:
-                            result = session.dispatcher.dispatch(
-                                block.name, block.input
-                            )
+                        result = await session.dispatcher.dispatch_async(
+                            block.name, block.input
+                        )
 
                         log.info("Tool result: %s -> %s", block.name, result[:200])
 
@@ -226,39 +221,6 @@ class ChatServer:
                 }))
                 return
 
-    async def _dispatch_async(
-        self, dispatcher: ToolDispatcher, tool_name: str, tool_input: dict
-    ) -> str:
-        """Handle async tool dispatch for protocol runs when PLR bridge is active."""
-        if tool_name == "run_protocol":
-            samples = []
-            missing = []
-            for sid in tool_input["sample_ids"]:
-                s = dispatcher.lims.get_sample(sid)
-                if s is None:
-                    missing.append(sid)
-                else:
-                    samples.append(s)
+        overflow = "I've reached the maximum number of tool calls for this query. Please try a simpler request."
+        await websocket.send(json.dumps({"type": "stream_end", "full_text": overflow}))
 
-            if missing:
-                return json.dumps({"error": f"Samples not found: {', '.join(missing)}"})
-
-            result = await self.plr.run_protocol_async(
-                protocol_name=tool_input["protocol_name"],
-                samples=samples,
-            )
-
-            for sid, consumed_ul in result.volumes_consumed.items():
-                s = dispatcher.lims.get_sample(sid)
-                if s:
-                    dispatcher.lims.update_sample_volume(sid, s.volume_ul - consumed_ul)
-
-            return json.dumps({
-                "run_id": result.run_id,
-                "status": result.status,
-                "samples_processed": len(samples),
-                "estimated_minutes": result.estimated_minutes,
-                "volumes_consumed": result.volumes_consumed,
-            })
-
-        return dispatcher.dispatch(tool_name, tool_input)

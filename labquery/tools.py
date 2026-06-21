@@ -156,6 +156,10 @@ SYSTEM_PROMPT = (
     "tips, deck status, or consumables, check the liquid handler. Use the available "
     "tools to look up real data. Respond in clear, concise language a bench scientist "
     "would understand.\n\n"
+    "Pay close attention to conversation history. When the user says \"this sample\", "
+    "\"that one\", \"it\", or refers to something previously discussed, resolve the "
+    "reference from the conversation context. Never ask the user to repeat a sample ID "
+    "or piece of information that was already mentioned in the conversation.\n\n"
     "For destructive actions (running protocols, measurements), confirm with the user "
     "before proceeding."
 )

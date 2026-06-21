@@ -47,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="HTTP server port for chat UI (default: 8080)",
     )
     parser.add_argument(
+        "--simulator",
+        action="store_true",
+        help="Run in simulator mode: auto-start labio-all LIMS and use PLR simulator",
+    )
+    parser.add_argument(
         "--visualizer",
         action="store_true",
         help="Enable PLR deck visualizer (browser-based)",
@@ -91,7 +96,7 @@ def run_interactive(nl: NLLayer) -> None:
 
 async def run_serve(args, lims, plr) -> None:
     """Start the WebSocket chat server, optionally with PLR visualizer."""
-    if args.visualizer:
+    if args.simulator or args.visualizer:
         await plr.setup()
 
     from labquery.ws_server import ChatServer
@@ -106,7 +111,7 @@ async def run_serve(args, lims, plr) -> None:
     try:
         await server.start()
     finally:
-        if args.visualizer:
+        if plr.bridge_ready:
             await plr.teardown()
 
 
@@ -129,9 +134,28 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("websockets").setLevel(logging.WARNING)
 
+    if args.visualizer and not args.simulator:
+        print(
+            "Error: --visualizer requires --simulator.\n"
+            "Hardware visualizer support is not yet implemented."
+        )
+        sys.exit(1)
+
+    labio_proc = None
+    if args.simulator:
+        from labquery.labio_server import start_labio_server
+        labio_proc = start_labio_server()
+    elif not args.lims_url:
+        print(
+            "Error: hardware mode is not yet supported.\n"
+            "Use --simulator to run with the labio-all simulator,\n"
+            "or --lims-url to connect to a running LIMS instance."
+        )
+        sys.exit(1)
+
     lims = LabioAllClient(base_url=args.lims_url)
     plr = PLRRunner(
-        use_simulator=True,
+        use_simulator=args.simulator,
         enable_visualizer=args.visualizer,
     )
 

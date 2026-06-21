@@ -2,5 +2,8 @@ anthropic>=0.40.0
 httpx>=0.27.0
 python-dotenv>=1.0.0
 pylabrobot>=0.2.0
+websockets>=12.0
+
+# Dev / test dependencies (also available via: pip install -e ".[dev]")
 pytest>=8.0.0
 pytest-asyncio>=0.24.0

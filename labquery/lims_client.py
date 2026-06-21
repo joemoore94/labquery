@@ -118,27 +118,28 @@ class LabioAllClient(LIMSClient):
         ids = self.list_sample_ids()
         uncached = [sid for sid in ids if sid not in self._sample_cache]
 
+        def fetch_one(sample_id: str) -> None:
+            with httpx.Client(base_url=self.base_url, timeout=30) as client:
+                resp = client.get(f"/sample/{sample_id}")
+            if resp.status_code == 404:
+                return
+            resp.raise_for_status()
+            sample = self._parse_sample(sample_id, resp.json())
+            self._sample_cache[sample_id] = sample
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-            futures = {executor.submit(self._fetch_one, sid): sid for sid in uncached}
+            futures = [executor.submit(fetch_one, sid) for sid in uncached]
             concurrent.futures.wait(futures)
 
         self._all_fetched = True
-
-    def _fetch_one(self, sample_id: str) -> Sample | None:
-        """Fetch a single sample (thread-safe, used by concurrent fetcher)."""
-        resp = self._http.get(f"/sample/{sample_id}")
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        sample = self._parse_sample(sample_id, resp.json())
-        self._sample_cache[sample_id] = sample
-        return sample
 
     def update_sample_volume(self, sample_id: str, new_volume_ul: float) -> bool:
         resp = self._http.post(
             f"/sample/{sample_id}",
             json={"volume": {"value": new_volume_ul}},
         )
+        if resp.status_code == 200 and sample_id in self._sample_cache:
+            self._sample_cache[sample_id].volume_ul = new_volume_ul
         return resp.status_code == 200
 
     def _parse_sample(self, sample_id: str, data: dict) -> Sample:

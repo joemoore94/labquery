@@ -36,8 +36,10 @@ def _find_measure_binary(measure_dir: Path | None = None) -> Path | None:
         path = base / "mac" / "measure"
     elif platform == "windows":
         path = base / "windows" / "measure.exe"
+    elif platform == "linux":
+        path = base / "linux" / "measure"
     else:
-        path = base / "mac" / "measure"
+        return None
 
     if path.exists():
         return path

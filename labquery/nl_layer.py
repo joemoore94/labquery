@@ -82,6 +82,15 @@ class ToolDispatcher:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
+    async def dispatch_async(self, tool_name: str, tool_input: dict) -> str:
+        """Async dispatch — uses async protocol execution when PLR bridge is active."""
+        if tool_name == "run_protocol" and self.plr.bridge_ready:
+            try:
+                return await self._handle_run_protocol_async(tool_input)
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+        return self.dispatch(tool_name, tool_input)
+
     def _handle_query_sample(self, inp: dict) -> str:
         sample = self.lims.get_sample(inp["sample_id"])
         if sample is None:
@@ -116,15 +125,7 @@ class ToolDispatcher:
         return json.dumps(result)
 
     def _handle_run_protocol(self, inp: dict) -> str:
-        samples = []
-        missing = []
-        for sid in inp["sample_ids"]:
-            s = self.lims.get_sample(sid)
-            if s is None:
-                missing.append(sid)
-            else:
-                samples.append(s)
-
+        samples, missing = self._resolve_samples(inp["sample_ids"])
         if missing:
             return json.dumps({
                 "error": f"Samples not found: {', '.join(missing)}",
@@ -140,6 +141,40 @@ class ToolDispatcher:
             if s:
                 self.lims.update_sample_volume(sid, s.volume_ul - consumed_ul)
 
+        return self._format_run_result(result, samples)
+
+    async def _handle_run_protocol_async(self, inp: dict) -> str:
+        samples, missing = self._resolve_samples(inp["sample_ids"])
+        if missing:
+            return json.dumps({
+                "error": f"Samples not found: {', '.join(missing)}",
+            })
+
+        result = await self.plr.run_protocol_async(
+            protocol_name=inp["protocol_name"],
+            samples=samples,
+        )
+
+        for sid, consumed_ul in result.volumes_consumed.items():
+            s = self.lims.get_sample(sid)
+            if s:
+                self.lims.update_sample_volume(sid, s.volume_ul - consumed_ul)
+
+        return self._format_run_result(result, samples)
+
+    def _resolve_samples(self, sample_ids: list[str]) -> tuple[list, list[str]]:
+        samples = []
+        missing = []
+        for sid in sample_ids:
+            s = self.lims.get_sample(sid)
+            if s is None:
+                missing.append(sid)
+            else:
+                samples.append(s)
+        return samples, missing
+
+    @staticmethod
+    def _format_run_result(result, samples) -> str:
         return json.dumps({
             "run_id": result.run_id,
             "status": result.status,
@@ -190,6 +225,9 @@ class ToolDispatcher:
         })
 
 
+MAX_TOOL_ITERATIONS = 20
+
+
 class NLLayer:
     """Orchestrates the Claude tool-use loop for labquery."""
 
@@ -207,7 +245,7 @@ class NLLayer:
     def query(self, user_input: str) -> str:
         self.conversation.add_user(user_input)
 
-        while True:
+        for _ in range(MAX_TOOL_ITERATIONS):
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=1024,
@@ -229,11 +267,13 @@ class NLLayer:
                 self.conversation.add_assistant(text)
                 return text
 
+        return "I've reached the maximum number of tool calls for this query. Please try a simpler request."
+
     def query_stream(self, user_input: str) -> Iterator[dict]:
         """Process a query with streaming, yielding events as they happen."""
         self.conversation.add_user(user_input)
 
-        while True:
+        for _ in range(MAX_TOOL_ITERATIONS):
             yield {"type": "stream_start"}
 
             collected_content = []
@@ -274,6 +314,8 @@ class NLLayer:
                 self.conversation.add_assistant(full_text)
                 yield {"type": "stream_end", "full_text": full_text}
                 return
+
+        yield {"type": "stream_end", "full_text": "I've reached the maximum number of tool calls for this query. Please try a simpler request."}
 
     @staticmethod
     def _extract_text(response) -> str:

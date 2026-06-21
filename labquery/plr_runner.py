@@ -76,7 +76,11 @@ class PLRRunner:
         return self._bridge is not None and self._bridge.ready
 
     async def setup(self) -> None:
-        """Initialize the PLR bridge with simulator backend."""
+        """Initialize the PLR bridge. Currently only the simulator backend is supported."""
+        if not self.use_simulator:
+            raise NotImplementedError(
+                "Hardware backends are not yet supported. Use --simulator."
+            )
         from labquery.plr_bridge import PLRBridge
         self._bridge = PLRBridge(enable_visualizer=self._enable_visualizer)
         await self._bridge.setup()
@@ -93,6 +97,15 @@ class PLRRunner:
     ) -> ProtocolResult:
         """Execute a protocol. Uses PLR bridge if set up, otherwise simulates."""
         if self.bridge_ready:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                raise RuntimeError(
+                    "Cannot call sync run_protocol() from an async context. "
+                    "Use run_protocol_async() instead."
+                )
             return asyncio.run(self.run_protocol_async(protocol_name, samples))
         return self._run_simulated(protocol_name, samples)
 
