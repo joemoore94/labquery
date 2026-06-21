@@ -1,19 +1,6 @@
 # labquery
 
-Natural language interface for LIMS and liquid handler automation.
-
-Ask questions like "where is sample C6OT0FN3S?" or "run the CEL/DNA protocol on these samples" and get real answers backed by your LIMS and PyLabRobot.
-
-## Architecture
-
-```
-User (natural language) -> NL Layer (Claude tool use) -> LIMS Client / PLR Runner -> Response
-```
-
-- **NL Layer** (`nl_layer.py`) — Claude function-calling loop that parses intent and dispatches to tools
-- **LIMS Client** (`lims_client.py`) — Abstract interface + labio-all REST implementation
-- **PLR Runner** (`plr_runner.py`) — Protocol execution via PyLabRobot (simulator in Phase 1)
-- **Tools** (`tools.py`) — Claude tool definitions for sample queries, inventory checks, protocol runs, and run history
+Natural language interface for LIMS and liquid handler automation. Ask questions about your samples, run protocols, and measure plates through a chat interface backed by Claude tool use, labio-all, and PyLabRobot.
 
 ## Setup
 
@@ -21,46 +8,63 @@ User (natural language) -> NL Layer (Claude tool use) -> LIMS Client / PLR Runne
 python3 -m venv labquery-env
 source labquery-env/bin/activate
 pip install -e ".[dev]"
-```
-
-Set your API key:
-
-```bash
 export ANTHROPIC_API_KEY=your_key_here
-```
-
-Start labio-all (LIMS backend):
-
-```bash
-git clone https://github.com/smohler/labio-all.git
-cd labio-all && chmod +x run.sh && ./run.sh
 ```
 
 ## Usage
 
-Interactive mode:
+Start the chat UI with the simulator (auto-starts labio-all and PLR):
 
 ```bash
-labquery
+labquery --simulator --serve
 ```
 
-Single query:
+Add `--visualizer` to open the PLR deck viewer in your browser:
 
 ```bash
-labquery "where is sample C6OT0FN3S?"
+labquery --simulator --serve --visualizer
 ```
 
-## Examples
+Single query from the command line:
+
+```bash
+labquery --simulator "how many CEL samples are available?"
+```
+
+Interactive REPL:
+
+```bash
+labquery --simulator
+```
+
+Connect to an existing LIMS instead of the simulator:
+
+```bash
+labquery --serve --lims-url http://your-lims:5001
+```
+
+## What it does
+
+- **Sample queries** -- look up location, volume, concentration, material type
+- **Inventory checks** -- count available samples by type, check if you have enough for a run
+- **Protocol execution** -- run liquid handling protocols (CEL/DNA combination, serial dilution, sample transfer) with automatic LIMS volume writeback
+- **Plate reader measurements** -- measure midi-chlorian signal with BAC/PRO safety guards
+- **Deck status** -- check tip counts and rack state on the liquid handler
+
+## Architecture
 
 ```
-labquery> Where is sample C6OT0FN3S right now?
-Sample C6OT0FN3S (CEL type) is in Rack 3, Position A4. Current volume: 450ul.
-
-labquery> Do we have enough CEL samples for a 384-well plate run?
-You have 312 CEL samples with sufficient volume. A 384-well run requires 384. You are 72 short.
-
-labquery> Run the CEL/DNA combination protocol on samples 47B, 52A, and 61C
-Protocol initiated. 3 samples queued. Estimated completion: 4.5 minutes.
+labquery/
+  cli.py           -- entry point, CLI flags, mode selection
+  nl_layer.py      -- Claude tool-use loop and ToolDispatcher
+  tools.py         -- tool definitions and system prompt
+  lims_client.py   -- abstract LIMSClient + labio-all REST implementation
+  plr_runner.py    -- protocol registry, simulated and bridge execution
+  plr_bridge.py    -- PyLabRobot OT-2 simulator bridge
+  measure.py       -- plate reader binary interface
+  labio_server.py  -- auto-clone and start labio-all as a subprocess
+  ws_server.py     -- WebSocket chat server with streaming responses
+  static/          -- browser chat UI
 ```
 
 ## Testing
@@ -69,15 +73,13 @@ Protocol initiated. 3 samples queued. Estimated completion: 4.5 minutes.
 pytest
 ```
 
-Tests use an in-memory LIMS fake — no running services required.
+Unit and integration tests run without any external services. The toy problem benchmark (`test_toy_problem.py`) requires labio-all running on localhost:5001 and skips automatically if it's not available.
 
 ## Project Status
 
-**Phase 1** (current): LIMS query layer, simulated PLR execution, Claude NL interface, CLI.
-
-**Phase 2** (next): Wire PLR simulator backend, real LIMS update loop, end-to-end integration tests.
-
-**Phase 3**: Slack notifications, demo notebook, community post to labautomation.io.
+- **Phase 1** (done): LIMS query layer, Claude NL interface, CLI, chat UI
+- **Phase 2** (done): PLR simulator integration, LIMS volume writeback, plate reader, integration tests, toy problem benchmark
+- **Phase 3** (current): Slack notifications, demo notebook, community post
 
 ## License
 
