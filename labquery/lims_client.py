@@ -72,6 +72,10 @@ class LIMSClient(ABC):
     def update_sample_volume(self, sample_id: str, new_volume_ul: float) -> bool:
         """Update the volume on a sample. Returns True on success."""
 
+    def record_run(self, run: RunRecord) -> bool:
+        """Record a protocol run. Override in backends that support run history."""
+        return False
+
 
 class LabioAllClient(LIMSClient):
     """Client for the labio-all open-source LIMS REST API.
@@ -149,6 +153,21 @@ class LabioAllClient(LIMSClient):
         if resp.status_code == 200 and sample_id in self._sample_cache:
             self._sample_cache[sample_id].volume_ul = new_volume_ul
         return resp.status_code == 200
+
+    def record_run(self, run: RunRecord) -> bool:
+        try:
+            resp = self._http.post("/runs", json={
+                "run_id": run.run_id,
+                "protocol_name": run.protocol_name,
+                "sample_ids": run.sample_ids,
+                "started_at": run.started_at.isoformat(),
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "status": run.status,
+                "notes": run.notes,
+            })
+            return resp.status_code == 201
+        except Exception:
+            return False
 
     def _parse_sample(self, sample_id: str, data: dict) -> Sample:
         material = data.get("material", {})
@@ -347,3 +366,145 @@ class BenchlingClient(LIMSClient):
                 "benchling_name": container.name or "",
             },
         )
+
+
+class ELabJournalClient(LIMSClient):
+    """Client for eLabJournal (eLabNext) LIMS via their REST API.
+
+    API docs: available in-app at /api/v1/swagger.
+    Auth: API key passed in Authorization header.
+
+    Requires: ELABJOURNAL_URL and ELABJOURNAL_API_KEY env vars
+    (or pass url= and api_key= to constructor).
+    """
+
+    def __init__(
+        self,
+        url: str | None = None,
+        api_key: str | None = None,
+        sample_type_id: int | None = None,
+    ):
+        resolved_url = url or os.environ.get("ELABJOURNAL_URL", "")
+        resolved_key = api_key or os.environ.get("ELABJOURNAL_API_KEY", "")
+
+        if not resolved_url:
+            raise ValueError(
+                "eLabJournal URL required. Set ELABJOURNAL_URL env var "
+                "or pass url= to ELabJournalClient."
+            )
+        if not resolved_key:
+            raise ValueError(
+                "eLabJournal API key required. Set ELABJOURNAL_API_KEY env var "
+                "or pass api_key= to ELabJournalClient."
+            )
+
+        self._base_url = resolved_url.rstrip("/")
+        self._http = httpx.Client(
+            base_url=f"{self._base_url}/api/v1",
+            headers={"Authorization": resolved_key},
+            timeout=30,
+        )
+        self._sample_type_id = sample_type_id
+        self._sample_cache: dict[str, Sample] = {}
+
+    def get_sample(self, sample_id: str) -> Sample | None:
+        if sample_id in self._sample_cache:
+            return self._sample_cache[sample_id]
+
+        try:
+            resp = self._http.get(f"/samples/{sample_id}")
+        except Exception:
+            return None
+
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+
+        sample = self._parse_sample(resp.json())
+        self._sample_cache[sample.sample_id] = sample
+        return sample
+
+    def list_sample_ids(self) -> list[str]:
+        ids = []
+        params: dict = {"$pageSize": 100, "$skip": 0}
+        if self._sample_type_id is not None:
+            params["sampleTypeID"] = self._sample_type_id
+
+        while True:
+            resp = self._http.get("/samples", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            records = data.get("data", data) if isinstance(data, dict) else data
+            if not records:
+                break
+            for record in records:
+                ids.append(str(record.get("sampleID", record.get("id", ""))))
+            if isinstance(data, dict) and len(records) < data.get("recordCount", len(records) + 1):
+                break
+            params["$skip"] += len(records)
+            if len(records) < params["$pageSize"]:
+                break
+
+        return ids
+
+    def list_samples(
+        self,
+        sample_type: str | None = None,
+        min_volume_ul: float | None = None,
+    ) -> list[Sample]:
+        ids = self.list_sample_ids()
+        results = []
+        for sid in ids:
+            sample = self.get_sample(sid)
+            if sample is None:
+                continue
+            if sample_type and sample.material_type != sample_type:
+                continue
+            if min_volume_ul is not None and sample.volume_ul < min_volume_ul:
+                continue
+            results.append(sample)
+        return results
+
+    def update_sample_volume(self, sample_id: str, new_volume_ul: float) -> bool:
+        try:
+            resp = self._http.patch(
+                f"/samples/{sample_id}",
+                json={"meta": {"volume": {"value": new_volume_ul, "unit": "uL"}}},
+            )
+            if resp.status_code == 200 and sample_id in self._sample_cache:
+                self._sample_cache[sample_id].volume_ul = new_volume_ul
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+    def _parse_sample(self, data: dict) -> Sample:
+        sample_id = str(data.get("sampleID", data.get("id", "")))
+        meta = data.get("meta", {})
+        volume_info = meta.get("volume", {})
+        conc_info = meta.get("concentration", {})
+
+        return Sample(
+            sample_id=sample_id,
+            material_type=data.get("sampleType", {}).get("name", ""),
+            volume_ul=float(volume_info.get("value", 0)),
+            volume_unit=volume_info.get("unit", "uL"),
+            concentration=float(conc_info.get("value", 0)),
+            concentration_unit=conc_info.get("unit", "mg/ml"),
+            labware_vendor="",
+            labware_catalog="",
+            sequence_url="",
+            created=self._parse_dt(data.get("created")),
+            metadata={
+                "name": data.get("name", ""),
+                "barcode": data.get("barcode", ""),
+            },
+        )
+
+    @staticmethod
+    def _parse_dt(val: str | None) -> datetime | None:
+        if not val:
+            return None
+        try:
+            return datetime.fromisoformat(val.rstrip("Z"))
+        except (ValueError, TypeError):
+            return None

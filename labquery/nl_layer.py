@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import anthropic
 
-from labquery.lims_client import LIMSClient
+from labquery.lims_client import LIMSClient, RunRecord
 from labquery.measure import measure_well
 from labquery.plr_runner import PLRRunner
 from labquery.tools import SYSTEM_PROMPT, TOOLS
@@ -137,11 +137,7 @@ class ToolDispatcher:
             samples=samples,
         )
 
-        for sid, consumed_ul in result.volumes_consumed.items():
-            s = self.lims.get_sample(sid)
-            if s:
-                self.lims.update_sample_volume(sid, s.volume_ul - consumed_ul)
-
+        self._post_run(result, samples)
         return self._format_run_result(result, samples)
 
     async def _handle_run_protocol_async(self, inp: dict) -> str:
@@ -156,12 +152,24 @@ class ToolDispatcher:
             samples=samples,
         )
 
+        self._post_run(result, samples)
+        return self._format_run_result(result, samples)
+
+    def _post_run(self, result, samples) -> None:
         for sid, consumed_ul in result.volumes_consumed.items():
             s = self.lims.get_sample(sid)
             if s:
                 self.lims.update_sample_volume(sid, s.volume_ul - consumed_ul)
 
-        return self._format_run_result(result, samples)
+        if result.status == "completed":
+            self.lims.record_run(RunRecord(
+                run_id=result.run_id,
+                protocol_name=result.protocol_name,
+                sample_ids=[s.sample_id for s in samples],
+                started_at=result.started_at,
+                completed_at=result.completed_at,
+                status=result.status,
+            ))
 
     def _resolve_samples(self, sample_ids: list[str]) -> tuple[list, list[str]]:
         samples = []

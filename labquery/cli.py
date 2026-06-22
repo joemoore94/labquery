@@ -21,9 +21,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--lims",
-        choices=["labio", "benchling"],
+        choices=["labio", "local", "benchling", "elabjournal"],
         default=None,
-        help="LIMS backend: labio (default with --simulator) or benchling",
+        help="LIMS backend: labio (default with --simulator), local (persistent SQLite), benchling, or elabjournal",
     )
     parser.add_argument(
         "--lims-url",
@@ -161,15 +161,23 @@ def main() -> None:
             from labquery.labio_server import start_labio_server
             labio_proc = start_labio_server()
         lims = LabioAllClient(base_url=args.lims_url)
+    elif lims_backend == "local":
+        from labquery.lims_server import start_local_lims
+        start_local_lims()
+        lims = LabioAllClient(base_url=args.lims_url or "http://127.0.0.1:5001")
     elif lims_backend == "benchling":
         from labquery.lims_client import BenchlingClient
         lims = BenchlingClient(url=args.lims_url)
+    elif lims_backend == "elabjournal":
+        from labquery.lims_client import ELabJournalClient
+        lims = ELabJournalClient(url=args.lims_url)
     else:
         print(
             "Error: no LIMS backend selected.\n"
             "Use --simulator for labio-all simulator,\n"
+            "--lims local for persistent SQLite LIMS,\n"
             "--lims benchling for Benchling,\n"
-            "or --lims labio --lims-url URL for an external labio-all."
+            "--lims elabjournal for eLabJournal."
         )
         sys.exit(1)
     plr = PLRRunner(

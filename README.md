@@ -45,6 +45,12 @@ Interactive REPL:
 labquery --simulator
 ```
 
+Use the persistent local LIMS (SQLite, data survives restarts):
+
+```bash
+labquery --lims local --serve
+```
+
 Connect to Benchling:
 
 ```bash
@@ -52,6 +58,14 @@ export BENCHLING_URL=https://mycompany.benchling.com
 export BENCHLING_API_KEY=sk_...
 pip install labquery[benchling]
 labquery --lims benchling --serve
+```
+
+Connect to eLabJournal:
+
+```bash
+export ELABJOURNAL_URL=https://mycompany.elabjournal.com
+export ELABJOURNAL_API_KEY=your_key
+labquery --lims elabjournal --serve
 ```
 
 Connect to an existing labio-all instance:
