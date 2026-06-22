@@ -71,3 +71,20 @@ class TestPLRRunner:
         assert "cel_dna_combination" in names
         assert "serial_dilution" in names
         assert "sample_transfer" in names
+
+
+class TestBackendResolution:
+    def test_default_backend(self):
+        runner = PLRRunner()
+        assert runner.backend == "opentrons"
+
+    def test_custom_backend(self):
+        runner = PLRRunner(backend="tecan")
+        assert runner.backend == "tecan"
+
+    def test_invalid_backend(self):
+        runner = PLRRunner(backend="nonexistent")
+        import pytest
+        with pytest.raises(ValueError, match="Unknown backend"):
+            import asyncio
+            asyncio.run(runner.setup())

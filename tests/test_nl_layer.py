@@ -45,7 +45,7 @@ def lims() -> FakeLIMSClient:
 
 @pytest.fixture
 def nl(lims: FakeLIMSClient) -> NLLayer:
-    plr = PLRRunner(use_simulator=True)
+    plr = PLRRunner()
     layer = NLLayer(lims=lims, plr=plr)
     return layer
 

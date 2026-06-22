@@ -6,6 +6,7 @@ fed back to Claude -> natural language response to user.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -83,13 +84,13 @@ class ToolDispatcher:
             return json.dumps({"error": str(e)})
 
     async def dispatch_async(self, tool_name: str, tool_input: dict) -> str:
-        """Async dispatch — uses async protocol execution when PLR bridge is active."""
+        """Async dispatch. Runs blocking handlers in a thread to avoid stalling the event loop."""
         if tool_name == "run_protocol" and self.plr.bridge_ready:
             try:
                 return await self._handle_run_protocol_async(tool_input)
             except Exception as e:
                 return json.dumps({"error": str(e)})
-        return self.dispatch(tool_name, tool_input)
+        return await asyncio.to_thread(self.dispatch, tool_name, tool_input)
 
     def _handle_query_sample(self, inp: dict) -> str:
         sample = self.lims.get_sample(inp["sample_id"])
@@ -267,7 +268,9 @@ class NLLayer:
                 self.conversation.add_assistant(text)
                 return text
 
-        return "I've reached the maximum number of tool calls for this query. Please try a simpler request."
+        overflow = "I've reached the maximum number of tool calls for this query. Please try a simpler request."
+        self.conversation.add_assistant(overflow)
+        return overflow
 
     def query_stream(self, user_input: str) -> Iterator[dict]:
         """Process a query with streaming, yielding events as they happen."""
@@ -315,7 +318,9 @@ class NLLayer:
                 yield {"type": "stream_end", "full_text": full_text}
                 return
 
-        yield {"type": "stream_end", "full_text": "I've reached the maximum number of tool calls for this query. Please try a simpler request."}
+        overflow = "I've reached the maximum number of tool calls for this query. Please try a simpler request."
+        self.conversation.add_assistant(overflow)
+        yield {"type": "stream_end", "full_text": overflow}
 
     @staticmethod
     def _extract_text(response) -> str:

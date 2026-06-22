@@ -46,7 +46,7 @@ def lims() -> FakeLIMSClient:
 
 @pytest.fixture
 def dispatcher(lims: FakeLIMSClient) -> ToolDispatcher:
-    plr = PLRRunner(use_simulator=True)
+    plr = PLRRunner()
     return ToolDispatcher(lims, plr)
 
 

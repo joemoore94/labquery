@@ -19,7 +19,15 @@ Start the chat UI with the simulator (auto-starts labio-all and PLR):
 labquery --simulator --serve
 ```
 
-Add `--visualizer` to open the PLR deck viewer in your browser:
+Select a liquid handler backend:
+
+```bash
+labquery --simulator --backend tecan --serve
+labquery --simulator --backend hamilton --serve
+labquery --simulator --backend opentrons --serve   # default
+```
+
+Add `--visualizer` to open the PLR deck viewer (Opentrons only for now):
 
 ```bash
 labquery --simulator --serve --visualizer
@@ -37,10 +45,19 @@ Interactive REPL:
 labquery --simulator
 ```
 
-Connect to an existing LIMS instead of the simulator:
+Connect to Benchling:
 
 ```bash
-labquery --serve --lims-url http://your-lims:5001
+export BENCHLING_URL=https://mycompany.benchling.com
+export BENCHLING_API_KEY=sk_...
+pip install labquery[benchling]
+labquery --lims benchling --serve
+```
+
+Connect to an existing labio-all instance:
+
+```bash
+labquery --lims labio --lims-url http://your-lims:5001 --serve
 ```
 
 ## What it does
@@ -51,6 +68,16 @@ labquery --serve --lims-url http://your-lims:5001
 - **Plate reader measurements** -- measure midi-chlorian signal with BAC/PRO safety guards
 - **Deck status** -- check tip counts and rack state on the liquid handler
 
+## Supported backends
+
+| Backend | Deck | Simulator | Hardware |
+| --- | --- | --- | --- |
+| `opentrons` (default) | OT-2 | OT-2 Simulator | stubbed |
+| `tecan` | EVO 150 | ChatterBox | stubbed |
+| `hamilton` | STARLet | ChatterBox | stubbed |
+
+Hardware backends are defined via PyLabRobot but gated until tested on real machines.
+
 ## Architecture
 
 ```
@@ -60,7 +87,7 @@ labquery/
   tools.py         -- tool definitions and system prompt
   lims_client.py   -- abstract LIMSClient + labio-all REST implementation
   plr_runner.py    -- protocol registry, simulated and bridge execution
-  plr_bridge.py    -- PyLabRobot OT-2 simulator bridge
+  plr_bridge.py    -- BackendConfig presets, PLR bridge for all backends
   measure.py       -- plate reader binary interface
   labio_server.py  -- auto-clone and start labio-all as a subprocess
   ws_server.py     -- WebSocket chat server with streaming responses
@@ -78,7 +105,7 @@ Unit and integration tests run without any external services. The toy problem be
 ## Project Status
 
 - **Phase 1** (done): LIMS query layer, Claude NL interface, CLI, chat UI
-- **Phase 2** (done): PLR simulator integration, LIMS volume writeback, plate reader, integration tests, toy problem benchmark
+- **Phase 2** (done): PLR simulator integration, multi-backend support, LIMS volume writeback, plate reader, integration tests, toy problem benchmark
 - **Phase 3** (current): Slack notifications, demo notebook, community post
 
 ## License

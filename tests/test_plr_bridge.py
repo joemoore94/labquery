@@ -1,11 +1,11 @@
-"""Tests for the PLR bridge — real PyLabRobot simulator execution."""
+"""Tests for the PLR bridge -- real PyLabRobot simulator execution."""
 
 from __future__ import annotations
 
 import pytest
 
 from labquery.lims_client import Sample
-from labquery.plr_bridge import PLRBridge
+from labquery.plr_bridge import BACKEND_PRESETS, PLRBridge
 
 pytestmark = pytest.mark.asyncio
 
@@ -23,7 +23,8 @@ def _make_sample(sample_id: str = "TEST-001", volume_ul: float = 500.0) -> Sampl
 
 @pytest.fixture
 async def bridge():
-    b = PLRBridge(enable_visualizer=False)
+    config = BACKEND_PRESETS["opentrons"]
+    b = PLRBridge(config=config, simulate=True)
     await b.setup()
     yield b
     await b.teardown()
@@ -34,7 +35,8 @@ class TestBridgeSetup:
         assert bridge.ready
 
     async def test_teardown_marks_not_ready(self):
-        b = PLRBridge(enable_visualizer=False)
+        config = BACKEND_PRESETS["opentrons"]
+        b = PLRBridge(config=config, simulate=True)
         await b.setup()
         assert b.ready
         await b.teardown()
@@ -91,6 +93,26 @@ class TestProtocolExecution:
 
 class TestBridgeNotReady:
     async def test_execute_without_setup(self):
-        bridge = PLRBridge(enable_visualizer=False)
+        config = BACKEND_PRESETS["opentrons"]
+        bridge = PLRBridge(config=config, simulate=True)
         with pytest.raises(RuntimeError, match="not set up"):
             await bridge.execute_protocol("cel/dna", [_make_sample()])
+
+
+class TestBackendPresets:
+    def test_all_presets_exist(self):
+        assert "opentrons" in BACKEND_PRESETS
+        assert "tecan" in BACKEND_PRESETS
+        assert "hamilton" in BACKEND_PRESETS
+
+    def test_preset_fields(self):
+        for name, config in BACKEND_PRESETS.items():
+            assert config.name, f"{name} missing name"
+            assert config.setup_deck is not None, f"{name} missing setup_deck"
+            assert config.sim_backend_factory is not None, f"{name} missing sim_backend_factory"
+
+    async def test_hardware_not_yet_supported(self):
+        config = BACKEND_PRESETS["opentrons"]
+        b = PLRBridge(config=config, simulate=False)
+        with pytest.raises(NotImplementedError, match="not yet tested"):
+            await b.setup()

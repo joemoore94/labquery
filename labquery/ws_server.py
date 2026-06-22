@@ -222,5 +222,6 @@ class ChatServer:
                 return
 
         overflow = "I've reached the maximum number of tool calls for this query. Please try a simpler request."
+        session.conversation.add_assistant(overflow)
         await websocket.send(json.dumps({"type": "stream_end", "full_text": overflow}))
 

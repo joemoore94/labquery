@@ -62,12 +62,18 @@ def _resolve_protocol(name: str) -> tuple[str, dict] | None:
 class PLRRunner:
     """Executes protocols via PyLabRobot.
 
-    Call setup() to enable real PLR simulator execution. Without setup(),
-    protocols run as simulated math — no PLR imports required.
+    Call setup() to enable real PLR execution. Without setup(),
+    protocols run as simulated math (no PLR dependency).
     """
 
-    def __init__(self, use_simulator: bool = True, enable_visualizer: bool = False):
-        self.use_simulator = use_simulator
+    def __init__(
+        self,
+        backend: str = "opentrons",
+        simulate: bool = True,
+        enable_visualizer: bool = False,
+    ):
+        self.backend = backend
+        self.simulate = simulate
         self._enable_visualizer = enable_visualizer
         self._bridge = None
 
@@ -76,13 +82,20 @@ class PLRRunner:
         return self._bridge is not None and self._bridge.ready
 
     async def setup(self) -> None:
-        """Initialize the PLR bridge. Currently only the simulator backend is supported."""
-        if not self.use_simulator:
-            raise NotImplementedError(
-                "Hardware backends are not yet supported. Use --simulator."
+        from labquery.plr_bridge import BACKEND_PRESETS, PLRBridge
+
+        config = BACKEND_PRESETS.get(self.backend)
+        if config is None:
+            available = ", ".join(BACKEND_PRESETS.keys())
+            raise ValueError(
+                f"Unknown backend '{self.backend}'. Available: {available}"
             )
-        from labquery.plr_bridge import PLRBridge
-        self._bridge = PLRBridge(enable_visualizer=self._enable_visualizer)
+
+        self._bridge = PLRBridge(
+            config=config,
+            simulate=self.simulate,
+            enable_visualizer=self._enable_visualizer,
+        )
         await self._bridge.setup()
 
     async def teardown(self) -> None:
@@ -114,7 +127,7 @@ class PLRRunner:
         protocol_name: str,
         samples: list[Sample],
     ) -> ProtocolResult:
-        """Async protocol execution for use within an event loop (e.g. WebSocket server)."""
+        """Async protocol execution for use within an event loop."""
         if self.bridge_ready:
             return await self._bridge.execute_protocol(protocol_name, samples)
         return self._run_simulated(protocol_name, samples)
@@ -122,7 +135,7 @@ class PLRRunner:
     def _run_simulated(
         self, protocol_name: str, samples: list[Sample]
     ) -> ProtocolResult:
-        """Simulated execution — just math, no PLR dependency."""
+        """Simulated execution -- just math, no PLR dependency."""
         resolved = _resolve_protocol(protocol_name)
         if resolved is None:
             return ProtocolResult(

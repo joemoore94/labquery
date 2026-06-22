@@ -20,6 +20,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Natural language interface for LIMS and liquid handler automation",
     )
     parser.add_argument(
+        "--lims",
+        choices=["labio", "benchling"],
+        default=None,
+        help="LIMS backend: labio (default with --simulator) or benchling",
+    )
+    parser.add_argument(
         "--lims-url",
         default=None,
         help="Base URL for the LIMS API (default: $LABIO_URL or http://127.0.0.1:5001)",
@@ -28,6 +34,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         default="claude-haiku-4-5-20251001",
         help="Claude model to use (default: claude-haiku-4-5-20251001)",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["opentrons", "tecan", "hamilton"],
+        default="opentrons",
+        help="Liquid handler backend (default: opentrons)",
     )
     parser.add_argument(
         "--serve",
@@ -54,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--visualizer",
         action="store_true",
-        help="Enable PLR deck visualizer (browser-based)",
+        help="Enable PLR deck visualizer (browser-based, requires --simulator)",
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -95,8 +107,8 @@ def run_interactive(nl: NLLayer) -> None:
 
 
 async def run_serve(args, lims, plr) -> None:
-    """Start the WebSocket chat server, optionally with PLR visualizer."""
-    if args.simulator or args.visualizer:
+    """Start the WebSocket chat server."""
+    if args.simulator:
         await plr.setup()
 
     from labquery.ws_server import ChatServer
@@ -141,21 +153,28 @@ def main() -> None:
         )
         sys.exit(1)
 
+    lims_backend = args.lims or ("labio" if args.simulator else None)
+
     labio_proc = None
-    if args.simulator:
-        from labquery.labio_server import start_labio_server
-        labio_proc = start_labio_server()
-    elif not args.lims_url:
+    if lims_backend == "labio":
+        if args.simulator:
+            from labquery.labio_server import start_labio_server
+            labio_proc = start_labio_server()
+        lims = LabioAllClient(base_url=args.lims_url)
+    elif lims_backend == "benchling":
+        from labquery.lims_client import BenchlingClient
+        lims = BenchlingClient(url=args.lims_url)
+    else:
         print(
-            "Error: hardware mode is not yet supported.\n"
-            "Use --simulator to run with the labio-all simulator,\n"
-            "or --lims-url to connect to a running LIMS instance."
+            "Error: no LIMS backend selected.\n"
+            "Use --simulator for labio-all simulator,\n"
+            "--lims benchling for Benchling,\n"
+            "or --lims labio --lims-url URL for an external labio-all."
         )
         sys.exit(1)
-
-    lims = LabioAllClient(base_url=args.lims_url)
     plr = PLRRunner(
-        use_simulator=args.simulator,
+        backend=args.backend,
+        simulate=args.simulator,
         enable_visualizer=args.visualizer,
     )
 
