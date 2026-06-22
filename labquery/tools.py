@@ -138,6 +138,23 @@ TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "get_run_history",
+        "description": (
+            "Retrieve the history of protocol runs, optionally filtered by sample ID. "
+            "Use this when the user asks what happened to a sample, what runs have been "
+            "done, or wants to see protocol execution history."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sample_id": {
+                    "type": "string",
+                    "description": "Filter runs to only those involving this sample ID. Omit to get all runs.",
+                },
+            },
+        },
+    },
 ]
 
 SYSTEM_PROMPT = (

@@ -72,6 +72,7 @@ class ToolDispatcher:
             "measure_well": self._handle_measure_well,
             "list_protocols": self._handle_list_protocols,
             "get_deck_status": self._handle_get_deck_status,
+            "get_run_history": self._handle_get_run_history,
         }
 
         handler = handlers.get(tool_name)
@@ -232,6 +233,21 @@ class ToolDispatcher:
             "total_count": len(ids),
             "sample_ids": ids[:limit],
         })
+
+    def _handle_get_run_history(self, inp: dict) -> str:
+        runs = self.lims.get_run_history(sample_id=inp.get("sample_id"))
+        return json.dumps([
+            {
+                "run_id": r.run_id,
+                "protocol_name": r.protocol_name,
+                "sample_ids": r.sample_ids,
+                "started_at": r.started_at.isoformat(),
+                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                "status": r.status,
+                "notes": r.notes,
+            }
+            for r in runs
+        ])
 
 
 MAX_TOOL_ITERATIONS = 20

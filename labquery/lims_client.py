@@ -76,6 +76,10 @@ class LIMSClient(ABC):
         """Record a protocol run. Override in backends that support run history."""
         return False
 
+    def get_run_history(self, sample_id: str | None = None) -> list[RunRecord]:
+        """Retrieve run history, optionally filtered by sample ID."""
+        return []
+
 
 class LabioAllClient(LIMSClient):
     """Client for the labio-all open-source LIMS REST API.
@@ -168,6 +172,28 @@ class LabioAllClient(LIMSClient):
             return resp.status_code == 201
         except Exception:
             return False
+
+    def get_run_history(self, sample_id: str | None = None) -> list[RunRecord]:
+        try:
+            resp = self._http.get("/runs")
+            if resp.status_code != 200:
+                return []
+            runs = []
+            for r in resp.json():
+                if sample_id and sample_id not in r.get("sample_ids", []):
+                    continue
+                runs.append(RunRecord(
+                    run_id=r["run_id"],
+                    protocol_name=r.get("protocol_name", ""),
+                    sample_ids=r.get("sample_ids", []),
+                    started_at=datetime.fromisoformat(r["started_at"]),
+                    completed_at=datetime.fromisoformat(r["completed_at"]) if r.get("completed_at") else None,
+                    status=r.get("status", ""),
+                    notes=r.get("notes", ""),
+                ))
+            return runs
+        except Exception:
+            return []
 
     def _parse_sample(self, sample_id: str, data: dict) -> Sample:
         material = data.get("material", {})
