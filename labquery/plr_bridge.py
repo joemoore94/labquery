@@ -20,7 +20,12 @@ from pylabrobot.resources.volume_tracker import set_volume_tracking
 if TYPE_CHECKING:
     from labquery.lims_client import Sample
 
-from labquery.plr_runner import PROTOCOL_REGISTRY, ProtocolResult, _resolve_protocol
+from labquery.plr_runner import (
+    PROTOCOL_REGISTRY,
+    ProtocolResult,
+    TransferResult,
+    _resolve_protocol,
+)
 
 
 @dataclass
@@ -400,3 +405,188 @@ class PLRBridge:
 
         self._tip_index += 1
         return spot
+
+    def _resolve_labware(self, name: str):
+        """Map a labware name string to the actual deck resource."""
+        layout = self._layout
+        mapping = {
+            "dest_plate": layout.plate,
+            "source_rack": layout.tube_rack,
+        }
+        resource = mapping.get(name)
+        if resource is None:
+            available = [k for k, v in mapping.items() if v is not None]
+            raise ValueError(
+                f"Unknown labware {name!r}. Available: {', '.join(available)}"
+            )
+        return resource
+
+    async def execute_transfer(
+        self,
+        source_wells: list[str],
+        dest_wells: list[str],
+        volume_ul: float,
+        source_plate: str = "dest_plate",
+        dest_plate: str = "dest_plate",
+        reuse_tips: bool = False,
+    ) -> TransferResult:
+        if not self._ready:
+            raise RuntimeError("PLRBridge not set up -- call setup() first")
+
+        run_id = f"RUN-{uuid.uuid4().hex[:8].upper()}"
+        started_at = datetime.now()
+
+        src_labware = self._resolve_labware(source_plate)
+        dst_labware = self._resolve_labware(dest_plate)
+
+        completed = 0
+        tips_used = 0
+        volumes_moved: dict[str, float] = {}
+
+        try:
+            for i, (src_pos, dst_pos) in enumerate(zip(source_wells, dest_wells)):
+                if not reuse_tips or i == 0:
+                    tip_spot = self._next_tip_spot()
+                    await self._lh.pick_up_tips(tip_spot)
+                    tips_used += 1
+
+                await self._lh.aspirate([src_labware[src_pos]], vols=[volume_ul])
+                await self._lh.dispense([dst_labware[dst_pos]], vols=[volume_ul])
+
+                if not reuse_tips:
+                    await self._lh.drop_tips([self._layout.trash])
+
+                volumes_moved[f"{src_pos}->{dst_pos}"] = volume_ul
+                completed += 1
+
+            if reuse_tips:
+                await self._lh.drop_tips([self._layout.trash])
+
+            return TransferResult(
+                run_id=run_id,
+                operation="transfer",
+                status="completed",
+                wells_processed=completed,
+                volumes_moved=volumes_moved,
+                tips_used=tips_used,
+                started_at=started_at,
+                completed_at=datetime.now(),
+            )
+        except Exception as e:
+            if reuse_tips and tips_used > 0 and completed < len(source_wells):
+                try:
+                    await self._lh.drop_tips([self._layout.trash])
+                except Exception:
+                    pass
+            return TransferResult(
+                run_id=run_id,
+                operation="transfer",
+                status="partial_error",
+                wells_processed=completed,
+                volumes_moved=volumes_moved,
+                tips_used=tips_used,
+                started_at=started_at,
+                completed_at=datetime.now(),
+                error_detail=f"Failed on transfer {completed + 1}/{len(source_wells)}: {e}",
+            )
+
+    async def execute_aspirate_dispense(
+        self,
+        steps: list[dict],
+        new_tip_between_steps: bool = False,
+    ) -> TransferResult:
+        if not self._ready:
+            raise RuntimeError("PLRBridge not set up -- call setup() first")
+
+        run_id = f"RUN-{uuid.uuid4().hex[:8].upper()}"
+        started_at = datetime.now()
+        completed = 0
+        tips_used = 0
+        volumes_moved: dict[str, float] = {}
+
+        try:
+            tip_spot = self._next_tip_spot()
+            await self._lh.pick_up_tips(tip_spot)
+            tips_used += 1
+
+            for i, step in enumerate(steps):
+                action = step["action"]
+                well_pos = step["well"]
+                vol = step["volume_ul"]
+                plate_name = step.get("plate", "dest_plate")
+                labware = self._resolve_labware(plate_name)
+
+                if new_tip_between_steps and i > 0:
+                    await self._lh.drop_tips([self._layout.trash])
+                    tip_spot = self._next_tip_spot()
+                    await self._lh.pick_up_tips(tip_spot)
+                    tips_used += 1
+
+                if action == "aspirate":
+                    await self._lh.aspirate([labware[well_pos]], vols=[vol])
+                elif action == "dispense":
+                    await self._lh.dispense([labware[well_pos]], vols=[vol])
+                else:
+                    raise ValueError(f"Unknown action {action!r}, expected 'aspirate' or 'dispense'")
+
+                volumes_moved[f"{action}:{well_pos}"] = vol
+                completed += 1
+
+            await self._lh.drop_tips([self._layout.trash])
+
+            return TransferResult(
+                run_id=run_id,
+                operation="aspirate_dispense",
+                status="completed",
+                wells_processed=completed,
+                volumes_moved=volumes_moved,
+                tips_used=tips_used,
+                started_at=started_at,
+                completed_at=datetime.now(),
+            )
+        except Exception as e:
+            try:
+                await self._lh.drop_tips([self._layout.trash])
+            except Exception:
+                pass
+            return TransferResult(
+                run_id=run_id,
+                operation="aspirate_dispense",
+                status="partial_error",
+                wells_processed=completed,
+                volumes_moved=volumes_moved,
+                tips_used=tips_used,
+                started_at=started_at,
+                completed_at=datetime.now(),
+                error_detail=f"Failed on step {completed + 1}/{len(steps)}: {e}",
+            )
+
+    def get_well_contents(
+        self, plate_name: str = "dest_plate", wells: list[str] | None = None
+    ) -> dict:
+        if not self._ready:
+            return {"error": "PLR bridge not set up"}
+
+        labware = self._resolve_labware(plate_name)
+        result = []
+
+        if wells:
+            positions = wells
+        else:
+            positions = [c.name for c in labware.children]
+
+        for pos in positions:
+            try:
+                well = labware[pos]
+                vol = well.tracker.get_used_volume() if hasattr(well, "tracker") else 0.0
+                if vol > 0 or wells:
+                    result.append({
+                        "well": pos,
+                        "volume_ul": round(vol, 2),
+                        "has_liquid": vol > 0,
+                    })
+            except (KeyError, IndexError):
+                if wells:
+                    result.append({"well": pos, "error": "well not found"})
+
+        return {"plate": plate_name, "wells": result}

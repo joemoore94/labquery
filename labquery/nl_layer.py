@@ -18,6 +18,7 @@ from labquery.measure import measure_well
 from labquery.notify import SlackNotifier
 from labquery.plr_runner import PLRRunner
 from labquery.tools import SYSTEM_PROMPT, TOOLS
+from labquery.well_utils import expand_well_list, validate_wells
 
 
 @dataclass
@@ -75,6 +76,9 @@ class ToolDispatcher:
             "list_protocols": self._handle_list_protocols,
             "get_deck_status": self._handle_get_deck_status,
             "get_run_history": self._handle_get_run_history,
+            "transfer": self._handle_transfer,
+            "aspirate_dispense": self._handle_aspirate_dispense,
+            "get_well_contents": self._handle_get_well_contents,
         }
 
         handler = handlers.get(tool_name)
@@ -88,11 +92,18 @@ class ToolDispatcher:
 
     async def dispatch_async(self, tool_name: str, tool_input: dict) -> str:
         """Async dispatch. Runs blocking handlers in a thread to avoid stalling the event loop."""
-        if tool_name == "run_protocol" and self.plr.bridge_ready:
-            try:
-                return await self._handle_run_protocol_async(tool_input)
-            except Exception as e:
-                return json.dumps({"error": str(e)})
+        if self.plr.bridge_ready:
+            async_handlers = {
+                "run_protocol": self._handle_run_protocol_async,
+                "transfer": self._handle_transfer_async,
+                "aspirate_dispense": self._handle_aspirate_dispense_async,
+            }
+            handler = async_handlers.get(tool_name)
+            if handler:
+                try:
+                    return await handler(tool_input)
+                except Exception as e:
+                    return json.dumps({"error": str(e)})
         return await asyncio.to_thread(self.dispatch, tool_name, tool_input)
 
     def _handle_query_sample(self, inp: dict) -> str:
@@ -231,6 +242,176 @@ class ToolDispatcher:
             return json.dumps({"error": result.error})
         self.notifier.notify_measurement(sample_ids, result.value)
         return json.dumps({"measurement": result.value, "unit": "midi-chlorian signal"})
+
+    def _handle_transfer(self, inp: dict) -> str:
+        source_wells = expand_well_list(inp["source_wells"])
+        dest_wells = expand_well_list(inp["destination_wells"])
+
+        error = self._validate_transfer_input(source_wells, dest_wells, inp["volume_ul"])
+        if error:
+            return error
+
+        result = self.plr.execute_transfer(
+            source_wells=source_wells,
+            dest_wells=dest_wells,
+            volume_ul=inp["volume_ul"],
+            source_plate=inp.get("source_plate", "dest_plate"),
+            dest_plate=inp.get("destination_plate", "dest_plate"),
+            reuse_tips=inp.get("reuse_tips", False),
+        )
+
+        self._post_transfer(result, source_wells, dest_wells, inp["volume_ul"])
+        return self._format_transfer_result(result)
+
+    async def _handle_transfer_async(self, inp: dict) -> str:
+        source_wells = expand_well_list(inp["source_wells"])
+        dest_wells = expand_well_list(inp["destination_wells"])
+
+        error = self._validate_transfer_input(source_wells, dest_wells, inp["volume_ul"])
+        if error:
+            return error
+
+        result = await self.plr.execute_transfer_async(
+            source_wells=source_wells,
+            dest_wells=dest_wells,
+            volume_ul=inp["volume_ul"],
+            source_plate=inp.get("source_plate", "dest_plate"),
+            dest_plate=inp.get("destination_plate", "dest_plate"),
+            reuse_tips=inp.get("reuse_tips", False),
+        )
+
+        self._post_transfer(result, source_wells, dest_wells, inp["volume_ul"])
+        return self._format_transfer_result(result)
+
+    def _validate_transfer_input(
+        self, source_wells: list[str], dest_wells: list[str], volume_ul: float
+    ) -> str | None:
+        if len(source_wells) != len(dest_wells):
+            return json.dumps({
+                "error": f"Source ({len(source_wells)}) and destination ({len(dest_wells)}) well counts must match.",
+            })
+        if volume_ul <= 0:
+            return json.dumps({"error": "Volume must be positive."})
+        invalid = validate_wells(source_wells) + validate_wells(dest_wells)
+        if invalid:
+            return json.dumps({"error": f"Invalid well positions: {', '.join(invalid)}"})
+        return None
+
+    def _post_transfer(self, result, source_wells, dest_wells, volume_ul) -> None:
+        self.lims.record_run(RunRecord(
+            run_id=result.run_id,
+            protocol_name="ad_hoc_transfer",
+            sample_ids=[],
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+            status=result.status,
+            notes=json.dumps({
+                "source_wells": source_wells,
+                "destination_wells": dest_wells,
+                "volume_ul": volume_ul,
+                "tips_used": result.tips_used,
+            }),
+        ))
+        if result.status == "completed":
+            self.notifier.notify_run_completed(
+                run_id=result.run_id,
+                protocol_name="ad_hoc_transfer",
+                sample_count=result.wells_processed,
+                estimated_minutes=0,
+            )
+        elif result.status.startswith("error") or result.status == "partial_error":
+            self.notifier.notify_run_error(
+                run_id=result.run_id,
+                protocol_name="ad_hoc_transfer",
+                error=result.error_detail or result.status,
+            )
+
+    @staticmethod
+    def _format_transfer_result(result) -> str:
+        return json.dumps({
+            "run_id": result.run_id,
+            "operation": result.operation,
+            "status": result.status,
+            "wells_processed": result.wells_processed,
+            "volumes_moved": result.volumes_moved,
+            "tips_used": result.tips_used,
+            "error_detail": result.error_detail or None,
+        })
+
+    def _handle_aspirate_dispense(self, inp: dict) -> str:
+        steps = inp["steps"]
+        error = self._validate_aspirate_dispense_input(steps)
+        if error:
+            return error
+
+        result = self.plr.execute_aspirate_dispense(
+            steps=steps,
+            new_tip_between_steps=inp.get("new_tip_between_steps", False),
+        )
+
+        self._post_aspirate_dispense(result, steps)
+        return self._format_transfer_result(result)
+
+    async def _handle_aspirate_dispense_async(self, inp: dict) -> str:
+        steps = inp["steps"]
+        error = self._validate_aspirate_dispense_input(steps)
+        if error:
+            return error
+
+        result = await self.plr.execute_aspirate_dispense_async(
+            steps=steps,
+            new_tip_between_steps=inp.get("new_tip_between_steps", False),
+        )
+
+        self._post_aspirate_dispense(result, steps)
+        return self._format_transfer_result(result)
+
+    def _validate_aspirate_dispense_input(self, steps: list[dict]) -> str | None:
+        if not steps:
+            return json.dumps({"error": "Steps list cannot be empty."})
+        for i, step in enumerate(steps):
+            if step.get("action") not in ("aspirate", "dispense"):
+                return json.dumps({"error": f"Step {i + 1}: action must be 'aspirate' or 'dispense'."})
+            if step.get("volume_ul", 0) <= 0:
+                return json.dumps({"error": f"Step {i + 1}: volume must be positive."})
+            invalid = validate_wells([step["well"]])
+            if invalid:
+                return json.dumps({"error": f"Step {i + 1}: invalid well {step['well']!r}."})
+        return None
+
+    def _post_aspirate_dispense(self, result, steps) -> None:
+        self.lims.record_run(RunRecord(
+            run_id=result.run_id,
+            protocol_name="ad_hoc_aspirate_dispense",
+            sample_ids=[],
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+            status=result.status,
+            notes=json.dumps({"steps": steps, "tips_used": result.tips_used}),
+        ))
+        if result.status == "completed":
+            self.notifier.notify_run_completed(
+                run_id=result.run_id,
+                protocol_name="ad_hoc_aspirate_dispense",
+                sample_count=result.wells_processed,
+                estimated_minutes=0,
+            )
+        elif result.status.startswith("error") or result.status == "partial_error":
+            self.notifier.notify_run_error(
+                run_id=result.run_id,
+                protocol_name="ad_hoc_aspirate_dispense",
+                error=result.error_detail or result.status,
+            )
+
+    def _handle_get_well_contents(self, inp: dict) -> str:
+        plate = inp.get("plate", "dest_plate")
+        wells = inp.get("wells")
+        if wells:
+            wells = expand_well_list(wells)
+        result = self.plr.get_well_contents(plate_name=plate, wells=wells)
+        if result is None:
+            return json.dumps({"error": "Liquid handler not active."})
+        return json.dumps(result)
 
     def _handle_list_protocols(self, inp: dict) -> str:
         return json.dumps(self.plr.list_protocols())

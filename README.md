@@ -88,8 +88,10 @@ labquery --simulator --serve
 - **Sample queries** -- look up location, volume, concentration, material type
 - **Inventory checks** -- count available samples by type, check if you have enough for a run
 - **Protocol execution** -- run liquid handling protocols (CEL/DNA combination, serial dilution, sample transfer) with automatic LIMS volume writeback
+- **Ad-hoc liquid handling** -- transfer liquid between arbitrary wells with user-specified volumes, no pre-defined protocol needed
+- **Aspirate/dispense** -- fine-grained control for complex patterns like one-to-many or multi-step sequences
+- **Deck introspection** -- check well contents, tip counts, and rack state on the liquid handler
 - **Plate reader measurements** -- measure midi-chlorian signal with BAC/PRO safety guards
-- **Deck status** -- check tip counts and rack state on the liquid handler
 - **Slack notifications** -- post run completions, errors, and measurements to a Slack channel
 
 ## Supported backends
@@ -100,7 +102,12 @@ labquery --simulator --serve
 | `tecan` | EVO 150 | ChatterBox | stubbed |
 | `hamilton` | STARLet | ChatterBox | stubbed |
 
-Hardware backends are defined via PyLabRobot but gated until tested on real machines.
+Hardware backends are defined via PyLabRobot but **gated behind a `NotImplementedError`** until tested on real machines. To connect to real hardware, you would need to:
+
+1. Remove the hardware gate in `plr_bridge.py` (the `NotImplementedError` in `PLRBridge.setup()`)
+2. Customize the deck layout function for your machine (`_setup_tecan_deck`, `_setup_hamilton_deck`, or `_setup_opentrons_deck`) -- the slot assignments, carrier types, and labware definitions are placeholders and will likely not match your physical deck
+3. Install any required drivers or connection software for your platform (e.g., EVOware for Tecan, VENUS for Hamilton)
+4. Note that Tecan and Hamilton deck layouts have no tube rack (`tube_rack=None`), so named protocols that place tube samples will not work -- use the `transfer` and `aspirate_dispense` tools with plate wells instead
 
 ## Architecture
 
@@ -113,6 +120,7 @@ labquery/
   lims_server.py   -- local SQLite-backed LIMS (Flask API, same shape as labio-all)
   plr_runner.py    -- protocol registry, simulated and bridge execution
   plr_bridge.py    -- BackendConfig presets, PLR bridge for all backends
+  well_utils.py    -- well range parsing and validation (A1-A6 expansion)
   notify.py        -- Slack webhook notifications (stub when unconfigured)
   measure.py       -- plate reader binary interface
   labio_server.py  -- auto-clone and start labio-all as a subprocess

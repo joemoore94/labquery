@@ -28,6 +28,20 @@ class ProtocolResult:
     completed_at: datetime | None = None
 
 
+@dataclass
+class TransferResult:
+    """Result of an ad-hoc transfer or aspirate/dispense operation."""
+    run_id: str
+    operation: str
+    status: str
+    wells_processed: int
+    volumes_moved: dict[str, float] = field(default_factory=dict)
+    tips_used: int = 0
+    started_at: datetime = field(default_factory=datetime.now)
+    completed_at: datetime | None = None
+    error_detail: str = ""
+
+
 PROTOCOL_REGISTRY: dict[str, dict] = {
     "cel_dna_combination": {
         "aliases": ["cel/dna combination", "cel/dna", "cel dna"],
@@ -188,3 +202,136 @@ class PLRRunner:
             }
             for key, proto in PROTOCOL_REGISTRY.items()
         ]
+
+    async def execute_transfer_async(
+        self,
+        source_wells: list[str],
+        dest_wells: list[str],
+        volume_ul: float,
+        source_plate: str = "dest_plate",
+        dest_plate: str = "dest_plate",
+        reuse_tips: bool = False,
+    ):
+        """Ad-hoc transfer. Uses PLR bridge if set up, otherwise simulates."""
+        if self.bridge_ready:
+            return await self._bridge.execute_transfer(
+                source_wells, dest_wells, volume_ul,
+                source_plate, dest_plate, reuse_tips,
+            )
+        return self._simulate_transfer(
+            source_wells, dest_wells, volume_ul, reuse_tips,
+        )
+
+    def execute_transfer(
+        self,
+        source_wells: list[str],
+        dest_wells: list[str],
+        volume_ul: float,
+        source_plate: str = "dest_plate",
+        dest_plate: str = "dest_plate",
+        reuse_tips: bool = False,
+    ):
+        """Sync wrapper for execute_transfer_async."""
+        if self.bridge_ready:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError(
+                    "Cannot call sync execute_transfer() from an async context. "
+                    "Use execute_transfer_async() instead."
+                )
+            return asyncio.run(self.execute_transfer_async(
+                source_wells, dest_wells, volume_ul,
+                source_plate, dest_plate, reuse_tips,
+            ))
+        return self._simulate_transfer(
+            source_wells, dest_wells, volume_ul, reuse_tips,
+        )
+
+    def _simulate_transfer(
+        self,
+        source_wells: list[str],
+        dest_wells: list[str],
+        volume_ul: float,
+        reuse_tips: bool = False,
+    ):
+        run_id = f"RUN-{uuid.uuid4().hex[:8].upper()}"
+        volumes_moved = {
+            f"{s}->{d}": volume_ul
+            for s, d in zip(source_wells, dest_wells)
+        }
+        return TransferResult(
+            run_id=run_id,
+            operation="transfer",
+            status="completed",
+            wells_processed=len(source_wells),
+            volumes_moved=volumes_moved,
+            tips_used=1 if reuse_tips else len(source_wells),
+            started_at=datetime.now(),
+            completed_at=datetime.now(),
+        )
+
+    async def execute_aspirate_dispense_async(
+        self,
+        steps: list[dict],
+        new_tip_between_steps: bool = False,
+    ):
+        """Ad-hoc aspirate/dispense. Uses PLR bridge if set up, otherwise simulates."""
+        if self.bridge_ready:
+            return await self._bridge.execute_aspirate_dispense(
+                steps, new_tip_between_steps,
+            )
+        return self._simulate_aspirate_dispense(steps, new_tip_between_steps)
+
+    def execute_aspirate_dispense(
+        self,
+        steps: list[dict],
+        new_tip_between_steps: bool = False,
+    ):
+        """Sync wrapper for execute_aspirate_dispense_async."""
+        if self.bridge_ready:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError(
+                    "Cannot call sync execute_aspirate_dispense() from an async context. "
+                    "Use execute_aspirate_dispense_async() instead."
+                )
+            return asyncio.run(self.execute_aspirate_dispense_async(
+                steps, new_tip_between_steps,
+            ))
+        return self._simulate_aspirate_dispense(steps, new_tip_between_steps)
+
+    def _simulate_aspirate_dispense(
+        self,
+        steps: list[dict],
+        new_tip_between_steps: bool = False,
+    ):
+        run_id = f"RUN-{uuid.uuid4().hex[:8].upper()}"
+        volumes_moved = {}
+        for step in steps:
+            key = f"{step['action']}:{step['well']}"
+            volumes_moved[key] = step["volume_ul"]
+
+        return TransferResult(
+            run_id=run_id,
+            operation="aspirate_dispense",
+            status="completed",
+            wells_processed=len(steps),
+            volumes_moved=volumes_moved,
+            tips_used=len(steps) if new_tip_between_steps else 1,
+            started_at=datetime.now(),
+            completed_at=datetime.now(),
+        )
+
+    def get_well_contents(
+        self, plate_name: str = "dest_plate", wells: list[str] | None = None
+    ) -> dict | None:
+        """Return well contents from the PLR bridge, or None if not set up."""
+        if self.bridge_ready:
+            return self._bridge.get_well_contents(plate_name, wells)
+        return None
