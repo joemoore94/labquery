@@ -74,6 +74,15 @@ Connect to an existing labio-all instance:
 labquery --lims labio --lims-url http://your-lims:5001 --serve
 ```
 
+Enable Slack notifications for run completions and errors:
+
+```bash
+labquery --simulator --serve --slack-webhook https://hooks.slack.com/services/T.../B.../...
+# or via env var:
+export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../...
+labquery --simulator --serve
+```
+
 ## What it does
 
 - **Sample queries** -- look up location, volume, concentration, material type
@@ -81,6 +90,7 @@ labquery --lims labio --lims-url http://your-lims:5001 --serve
 - **Protocol execution** -- run liquid handling protocols (CEL/DNA combination, serial dilution, sample transfer) with automatic LIMS volume writeback
 - **Plate reader measurements** -- measure midi-chlorian signal with BAC/PRO safety guards
 - **Deck status** -- check tip counts and rack state on the liquid handler
+- **Slack notifications** -- post run completions, errors, and measurements to a Slack channel
 
 ## Supported backends
 
@@ -100,12 +110,16 @@ labquery/
   nl_layer.py      -- Claude tool-use loop and ToolDispatcher
   tools.py         -- tool definitions and system prompt
   lims_client.py   -- abstract LIMSClient + labio-all REST implementation
+  lims_server.py   -- local SQLite-backed LIMS (Flask API, same shape as labio-all)
   plr_runner.py    -- protocol registry, simulated and bridge execution
   plr_bridge.py    -- BackendConfig presets, PLR bridge for all backends
+  notify.py        -- Slack webhook notifications (stub when unconfigured)
   measure.py       -- plate reader binary interface
   labio_server.py  -- auto-clone and start labio-all as a subprocess
   ws_server.py     -- WebSocket chat server with streaming responses
   static/          -- browser chat UI
+notebooks/
+  demo.ipynb       -- end-to-end walkthrough notebook
 ```
 
 ## Testing
@@ -115,12 +129,6 @@ pytest
 ```
 
 Unit and integration tests run without any external services. The toy problem benchmark (`test_toy_problem.py`) requires labio-all running on localhost:5001 and skips automatically if it's not available.
-
-## Project Status
-
-- **Phase 1** (done): LIMS query layer, Claude NL interface, CLI, chat UI
-- **Phase 2** (done): PLR simulator integration, multi-backend support, LIMS volume writeback, plate reader, integration tests, toy problem benchmark
-- **Phase 3** (current): Slack notifications, demo notebook, community post
 
 ## License
 

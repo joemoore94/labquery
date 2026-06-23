@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from labquery.lims_client import LabioAllClient
 from labquery.nl_layer import NLLayer
+from labquery.notify import SlackNotifier
 from labquery.plr_runner import PLRRunner
 
 
@@ -69,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable PLR deck visualizer (browser-based, requires --simulator)",
     )
     parser.add_argument(
+        "--slack-webhook",
+        default=None,
+        help="Slack incoming webhook URL for notifications (or set SLACK_WEBHOOK_URL env var)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose logging",
@@ -106,7 +112,7 @@ def run_interactive(nl: NLLayer) -> None:
             print(f"\nError: {e}\n", file=sys.stderr)
 
 
-async def run_serve(args, lims, plr) -> None:
+async def run_serve(args, lims, plr, notifier=None) -> None:
     """Start the WebSocket chat server."""
     if args.simulator:
         await plr.setup()
@@ -119,6 +125,7 @@ async def run_serve(args, lims, plr) -> None:
         model=args.model,
         ws_port=args.ws_port,
         http_port=args.http_port,
+        notifier=notifier,
     )
     try:
         await server.start()
@@ -186,17 +193,23 @@ def main() -> None:
         enable_visualizer=args.visualizer,
     )
 
+    import os
+    webhook_url = args.slack_webhook or os.environ.get("SLACK_WEBHOOK_URL")
+    notifier = SlackNotifier(webhook_url=webhook_url)
+    if notifier.enabled:
+        logging.getLogger("labquery").info("Slack notifications enabled")
+
     if args.serve:
         try:
-            asyncio.run(run_serve(args, lims, plr))
+            asyncio.run(run_serve(args, lims, plr, notifier))
         except KeyboardInterrupt:
             print("\nShutting down.")
     elif args.query:
-        nl = NLLayer(lims=lims, plr=plr, model=args.model)
+        nl = NLLayer(lims=lims, plr=plr, model=args.model, notifier=notifier)
         response = nl.query(args.query)
         print(response)
     else:
-        nl = NLLayer(lims=lims, plr=plr, model=args.model)
+        nl = NLLayer(lims=lims, plr=plr, model=args.model, notifier=notifier)
         run_interactive(nl)
 
 

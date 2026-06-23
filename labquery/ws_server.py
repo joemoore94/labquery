@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 from labquery.lims_client import LIMSClient
 from labquery.nl_layer import MAX_TOOL_ITERATIONS, Conversation, ToolDispatcher
+from labquery.notify import SlackNotifier
 from labquery.plr_runner import PLRRunner
 from labquery.tools import SYSTEM_PROMPT, TOOLS
 
@@ -49,6 +50,7 @@ class ChatServer:
         host: str = "127.0.0.1",
         ws_port: int = 8765,
         http_port: int = 8080,
+        notifier: SlackNotifier | None = None,
     ):
         self.lims = lims
         self.plr = plr
@@ -56,6 +58,7 @@ class ChatServer:
         self.host = host
         self.ws_port = ws_port
         self.http_port = http_port
+        self.notifier = notifier
         self._sessions: dict[int, ChatSession] = {}
 
     async def start(self) -> None:
@@ -117,7 +120,7 @@ class ChatServer:
 
     async def _handle_connection(self, websocket) -> None:
         session_id = id(websocket)
-        dispatcher = ToolDispatcher(self.lims, self.plr)
+        dispatcher = ToolDispatcher(self.lims, self.plr, notifier=self.notifier)
         session = ChatSession(dispatcher=dispatcher, model=self.model)
         self._sessions[session_id] = session
         log.info("Client connected (session %s)", session_id)

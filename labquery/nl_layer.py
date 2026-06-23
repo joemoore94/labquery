@@ -15,6 +15,7 @@ import anthropic
 
 from labquery.lims_client import LIMSClient, RunRecord
 from labquery.measure import measure_well
+from labquery.notify import SlackNotifier
 from labquery.plr_runner import PLRRunner
 from labquery.tools import SYSTEM_PROMPT, TOOLS
 
@@ -59,9 +60,10 @@ class ToolDispatcher:
     Shared by NLLayer (blocking CLI) and the WebSocket server (streaming).
     """
 
-    def __init__(self, lims: LIMSClient, plr: PLRRunner):
+    def __init__(self, lims: LIMSClient, plr: PLRRunner, notifier: SlackNotifier | None = None):
         self.lims = lims
         self.plr = plr
+        self.notifier = notifier or SlackNotifier()
 
     def dispatch(self, tool_name: str, tool_input: dict) -> str:
         handlers = {
@@ -171,6 +173,18 @@ class ToolDispatcher:
                 completed_at=result.completed_at,
                 status=result.status,
             ))
+            self.notifier.notify_run_completed(
+                run_id=result.run_id,
+                protocol_name=result.protocol_name,
+                sample_count=len(samples),
+                estimated_minutes=result.estimated_minutes,
+            )
+        elif result.status.startswith("error"):
+            self.notifier.notify_run_error(
+                run_id=result.run_id,
+                protocol_name=result.protocol_name,
+                error=result.status,
+            )
 
     def _resolve_samples(self, sample_ids: list[str]) -> tuple[list, list[str]]:
         samples = []
@@ -215,6 +229,7 @@ class ToolDispatcher:
         result = measure_well(sample_ids, volumes)
         if result.error:
             return json.dumps({"error": result.error})
+        self.notifier.notify_measurement(sample_ids, result.value)
         return json.dumps({"measurement": result.value, "unit": "midi-chlorian signal"})
 
     def _handle_list_protocols(self, inp: dict) -> str:
@@ -261,11 +276,12 @@ class NLLayer:
         lims: LIMSClient,
         plr: PLRRunner,
         model: str = "claude-haiku-4-5-20251001",
+        notifier: SlackNotifier | None = None,
     ):
         self.model = model
         self.client = anthropic.Anthropic()
         self.conversation = Conversation()
-        self.dispatcher = ToolDispatcher(lims, plr)
+        self.dispatcher = ToolDispatcher(lims, plr, notifier=notifier)
 
     def query(self, user_input: str) -> str:
         self.conversation.add_user(user_input)
