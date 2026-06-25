@@ -72,6 +72,22 @@ class LIMSClient(ABC):
     def update_sample_volume(self, sample_id: str, new_volume_ul: float) -> bool:
         """Update the volume on a sample. Returns True on success."""
 
+    def search_samples(self, query: str, limit: int = 20) -> list[Sample]:
+        """Search samples by partial ID or material type. Override for backend-specific search."""
+        all_samples = self.list_samples()
+        q = query.upper()
+        results = [s for s in all_samples if q in s.sample_id.upper() or q in s.material_type.upper()]
+        return results[:limit]
+
+    def create_sample(
+        self,
+        material_type: str,
+        volume_ul: float,
+        concentration: float = 0.0,
+    ) -> Sample | None:
+        """Create a new sample. Override in backends that support creation."""
+        return None
+
     def record_run(self, run: RunRecord) -> bool:
         """Record a protocol run. Override in backends that support run history."""
         return False
@@ -157,6 +173,33 @@ class LabioAllClient(LIMSClient):
         if resp.status_code == 200 and sample_id in self._sample_cache:
             self._sample_cache[sample_id].volume_ul = new_volume_ul
         return resp.status_code == 200
+
+    def search_samples(self, query: str, limit: int = 20) -> list[Sample]:
+        resp = self._http.get("/samples/search", params={"q": query, "limit": limit})
+        if resp.status_code != 200:
+            return super().search_samples(query, limit)
+        ids = resp.json()
+        return [s for s in (self.get_sample(sid) for sid in ids) if s is not None]
+
+    def create_sample(
+        self,
+        material_type: str,
+        volume_ul: float,
+        concentration: float = 0.0,
+    ) -> Sample | None:
+        resp = self._http.post("/samples/create", json={
+            "material_type": material_type,
+            "volume_ul": volume_ul,
+            "concentration": concentration,
+        })
+        if resp.status_code != 201:
+            return None
+        data = resp.json()
+        return Sample(
+            sample_id=data["sample_id"],
+            material_type=data["material_type"],
+            volume_ul=data["volume_ul"],
+        )
 
     def record_run(self, run: RunRecord) -> bool:
         try:

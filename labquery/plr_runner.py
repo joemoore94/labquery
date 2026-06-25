@@ -24,6 +24,7 @@ class ProtocolResult:
     status: str
     estimated_minutes: float
     volumes_consumed: dict[str, float] = field(default_factory=dict)
+    well_details: dict[str, float] = field(default_factory=dict)
     started_at: datetime = field(default_factory=datetime.now)
     completed_at: datetime | None = None
 
@@ -175,12 +176,23 @@ class PLRRunner:
 
         volumes_consumed = {s.sample_id: vol_per_sample for s in samples}
 
+        well_details = {}
+        if key == "serial_dilution":
+            rows = "ABCDEFGH"
+            for i, sample in enumerate(samples):
+                row = rows[i % len(rows)]
+                vol = vol_per_sample
+                for col in range(1, 7):
+                    well_details[f"{row}{col}"] = round(vol / 2, 2)
+                    vol = vol / 2
+
         return ProtocolResult(
             run_id=run_id,
             protocol_name=key,
             status="completed",
             estimated_minutes=est_minutes,
             volumes_consumed=volumes_consumed,
+            well_details=well_details,
             started_at=datetime.now(),
             completed_at=datetime.now(),
         )

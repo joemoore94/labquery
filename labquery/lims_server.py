@@ -192,6 +192,47 @@ def update_sample(sample_id):
     return jsonify({"error": "Bad request - invalid input"}), 400
 
 
+@app.route("/samples/search", methods=["GET"])
+def search_samples():
+    q = request.args.get("q", "").upper()
+    limit = int(request.args.get("limit", 20))
+    if not q:
+        return jsonify([])
+    db = _get_db()
+    rows = db.execute(
+        "SELECT sample_id FROM samples WHERE UPPER(sample_id) LIKE ? OR UPPER(material_type) LIKE ? LIMIT ?",
+        (f"%{q}%", f"%{q}%", limit),
+    ).fetchall()
+    db.close()
+    return jsonify([r["sample_id"] for r in rows])
+
+
+@app.route("/samples/create", methods=["POST"])
+def create_sample_endpoint():
+    data = request.json
+    if not data or "material_type" not in data:
+        return jsonify({"error": "material_type required"}), 400
+
+    material_type = data["material_type"].upper()
+    prefixes = {"CEL": "C", "DNA": "D", "BAC": "B", "PRO": "P"}
+    prefix = prefixes.get(material_type, "X")
+    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    sample_id = prefix + suffix
+
+    volume = data.get("volume_ul", 1000.0)
+    conc = data.get("concentration", 0.0)
+    created = datetime.now().isoformat() + "Z"
+
+    db = _get_db()
+    db.execute(
+        "INSERT INTO samples VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (sample_id, material_type, volume, "uL", conc, "mg/ml", "", "", "", created),
+    )
+    db.commit()
+    db.close()
+    return jsonify({"sample_id": sample_id, "material_type": material_type, "volume_ul": volume}), 201
+
+
 @app.route("/samples/seed", methods=["POST"])
 def seed():
     count = request.json.get("count", 10000) if request.json else 10000
@@ -264,11 +305,12 @@ def get_run(run_id):
     })
 
 
-def start_local_lims(port: int = 5001) -> subprocess.Popen:
-    """Initialize DB, seed data, and start the LIMS server as a subprocess."""
+def start_local_lims(port: int = 5001, seed: bool = False) -> subprocess.Popen:
+    """Initialize DB and start the LIMS server as a subprocess."""
     init_db()
-    count = seed_samples()
-    log.info("Local LIMS: %d samples in %s", count, DEFAULT_DB_PATH)
+    if seed:
+        count = seed_samples()
+        log.info("Local LIMS: seeded %d samples in %s", count, DEFAULT_DB_PATH)
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "labquery.lims_server"],
@@ -293,5 +335,4 @@ def start_local_lims(port: int = 5001) -> subprocess.Popen:
 
 if __name__ == "__main__":
     init_db()
-    seed_samples()
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    app.run(host="0.0.0.0", port=5001)

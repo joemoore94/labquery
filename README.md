@@ -1,6 +1,8 @@
 # labquery
 
-Natural language interface for LIMS and liquid handler automation. Ask questions about your samples, run protocols, and measure plates through a chat interface backed by Claude tool use, labio-all, and PyLabRobot.
+Natural language interface for LIMS and liquid handler automation. Ask questions about your samples, run protocols, and measure plates through a chat interface backed by Claude tool use and PyLabRobot.
+
+![Chat UI](assets/chat_ui.png)
 
 ## Setup
 
@@ -8,7 +10,7 @@ Natural language interface for LIMS and liquid handler automation. Ask questions
 python3 -m venv labquery-env
 source labquery-env/bin/activate
 pip install -e ".[dev]"
-export ANTHROPIC_API_KEY=your_key_here
+cp .env.example .env   # then fill in your Anthropic API key
 ```
 
 ## Usage
@@ -18,6 +20,9 @@ LIMS starts automatically (defaults to local SQLite). `--simulator` selects the 
 ```bash
 # Chat UI with local LIMS + simulated liquid handler (default, no external deps)
 labquery --simulator --serve
+
+# --seed populates the local LIMS with 10,000 random samples for testing
+labquery --simulator --seed --serve
 ```
 
 Select a LIMS backend:
@@ -143,6 +148,10 @@ pytest
 ```
 
 Unit and integration tests run without any external services. The toy problem benchmark (`test_toy_problem.py`) requires labio-all running on localhost:5001 and skips automatically if it's not available.
+
+## Issues
+
+Found a bug or have a feature request? [Open an issue](https://github.com/joemoore94/labquery/issues).
 
 ## License
 

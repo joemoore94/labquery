@@ -74,8 +74,9 @@ TOOLS = [
     {
         "name": "list_sample_ids",
         "description": (
-            "List all sample IDs in the LIMS. Use this when the user wants to browse "
-            "available samples or needs to find sample IDs."
+            "List sample IDs in the LIMS. Use this when the user wants to browse "
+            "available samples or needs to find sample IDs. Supports filtering by "
+            "material type (e.g. CEL, DNA, PRO, BAC)."
         ),
         "input_schema": {
             "type": "object",
@@ -84,6 +85,10 @@ TOOLS = [
                     "type": "integer",
                     "description": "Maximum number of IDs to return (default 50)",
                     "default": 50,
+                },
+                "material_type": {
+                    "type": "string",
+                    "description": "Filter by material type (e.g. CEL, DNA, PRO, BAC)",
                 },
             },
         },
@@ -262,21 +267,77 @@ TOOLS = [
             },
         },
     },
+    {
+        "name": "search_samples",
+        "description": (
+            "Search for samples by partial ID or material type. Use this when the user "
+            "is looking for a sample but doesn't know the exact ID, or wants to find "
+            "samples matching a keyword."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search term: partial sample ID or material type (e.g. 'C6OT', 'CEL', 'DNA')",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (default 20)",
+                    "default": 20,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "create_sample",
+        "description": (
+            "Register a new sample in the LIMS. Use this when the user wants to log "
+            "a new sample they've prepared at the bench. Returns the generated sample ID."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "material_type": {
+                    "type": "string",
+                    "description": "Material type: CEL, DNA, BAC, or PRO",
+                    "enum": ["CEL", "DNA", "BAC", "PRO"],
+                },
+                "volume_ul": {
+                    "type": "number",
+                    "description": "Initial volume in microliters",
+                },
+                "concentration": {
+                    "type": "number",
+                    "description": "Concentration in mg/ml (default 0)",
+                    "default": 0,
+                },
+            },
+            "required": ["material_type", "volume_ul"],
+        },
+    },
 ]
 
-SYSTEM_PROMPT = (
+_SYSTEM_PROMPT_BASE = (
     "You are labquery, a natural language assistant for pharmaceutical lab automation. "
-    "You help scientists query their LIMS (Laboratory Information Management System), "
-    "control liquid handlers via PyLabRobot, and run plate reader measurements.\n\n"
-    "You have access to three systems:\n"
-    "- LIMS: tracks ~10,000 samples with material types (CEL, DNA, BAC, PRO), "
+    "You help scientists query their LIMS (Laboratory Information Management System) "
+    "and control liquid handlers via PyLabRobot.\n\n"
+    "You have access to:\n"
+    "- LIMS: tracks samples with material types (CEL, DNA, BAC, PRO), "
     "volumes (uL), concentrations (mg/ml), labware info, and sequence URLs.\n"
-    "- Liquid handler (PyLabRobot): an OT-2 simulator with a tube rack, destination "
+    "- Liquid handler (PyLabRobot): a simulator with a tube rack, destination "
     "plate, and two 96-tip racks. You can check deck status including tip counts.\n"
+)
+
+_SYSTEM_PROMPT_PLATE_READER = (
     "- Plate reader: measures midi-chlorian signal from well contents. ONLY CEL and DNA "
     "samples are compatible. BAC samples BREAK the reader. PRO samples put it in service "
-    "mode. Always verify sample types before measuring.\n\n"
-    "You can perform ad-hoc liquid handling without a named protocol. Use the 'transfer' "
+    "mode. Always verify sample types before measuring.\n"
+)
+
+_SYSTEM_PROMPT_TOOLS = (
+    "\nYou can perform ad-hoc liquid handling without a named protocol. Use the 'transfer' "
     "tool to move liquid between specific wells with a specified volume. For complex "
     "multi-step operations (e.g., aspirate from one source and dispense to several "
     "destinations), use 'aspirate_dispense'. Use 'get_well_contents' to inspect what's "
@@ -299,3 +360,14 @@ SYSTEM_PROMPT = (
     "For destructive actions (running protocols, measurements), confirm with the user "
     "before proceeding."
 )
+
+
+def build_system_prompt(has_plate_reader: bool = True) -> str:
+    parts = [_SYSTEM_PROMPT_BASE]
+    if has_plate_reader:
+        parts.append(_SYSTEM_PROMPT_PLATE_READER)
+    parts.append(_SYSTEM_PROMPT_TOOLS)
+    return "".join(parts)
+
+
+SYSTEM_PROMPT = build_system_prompt()

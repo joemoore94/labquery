@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from labquery.lims_client import Sample
@@ -116,3 +119,74 @@ class TestBackendPresets:
         b = PLRBridge(config=config, simulate=False)
         with pytest.raises(NotImplementedError, match="not yet tested"):
             await b.setup()
+
+
+class TestSetupCombinations:
+    """Test all (backend x simulate x enable_visualizer) combinations."""
+
+    @pytest.mark.parametrize("backend", [
+        "opentrons",
+        pytest.param("tecan", marks=pytest.mark.xfail(reason="Tecan deck missing trash area")),
+        "hamilton",
+    ])
+    async def test_simulate_no_visualizer(self, backend):
+        b = PLRBridge(config=BACKEND_PRESETS[backend], simulate=True, enable_visualizer=False)
+        await b.setup()
+        assert b.ready
+        await b.teardown()
+        assert not b.ready
+
+    @pytest.mark.parametrize("backend", ["opentrons", "tecan", "hamilton"])
+    async def test_hardware_rejected(self, backend):
+        b = PLRBridge(config=BACKEND_PRESETS[backend], simulate=False, enable_visualizer=False)
+        with pytest.raises(NotImplementedError):
+            await b.setup()
+
+    @pytest.mark.parametrize("backend", ["opentrons", "tecan", "hamilton"])
+    async def test_hardware_with_visualizer_rejected(self, backend):
+        b = PLRBridge(config=BACKEND_PRESETS[backend], simulate=False, enable_visualizer=True)
+        with pytest.raises(NotImplementedError):
+            await b.setup()
+
+    @pytest.mark.parametrize("backend", [
+        pytest.param("tecan", marks=pytest.mark.xfail(reason="Tecan deck missing trash area")),
+        "hamilton",
+    ])
+    async def test_visualizer_unsupported_backend(self, backend):
+        b = PLRBridge(config=BACKEND_PRESETS[backend], simulate=True, enable_visualizer=True)
+        with pytest.raises(ValueError, match="not supported"):
+            await b.setup()
+        await b.teardown()
+
+    @patch("pylabrobot.visualizer.Visualizer")
+    async def test_visualizer_opentrons_simulator(self, mock_vis_cls):
+        mock_vis = AsyncMock()
+        mock_vis_cls.return_value = mock_vis
+
+        b = PLRBridge(config=BACKEND_PRESETS["opentrons"], simulate=True, enable_visualizer=True)
+        await b.setup()
+
+        assert b.ready
+        mock_vis_cls.assert_called_once()
+        _, kwargs = mock_vis_cls.call_args
+        assert Path(kwargs["favicon"]).exists()
+        assert Path(kwargs["favicon"]).read_bytes()[:4] == b"\x89PNG"
+        mock_vis.setup.assert_awaited_once()
+
+        await b.teardown()
+        mock_vis.stop.assert_awaited_once()
+        assert not Path(kwargs["favicon"]).exists()
+
+
+class TestFavicon:
+    def test_default_favicon_is_valid_png(self):
+        import base64
+        data = base64.b64decode(PLRBridge._DEFAULT_FAVICON)
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
+
+    async def test_favicon_cleaned_up_on_teardown(self):
+        b = PLRBridge(config=BACKEND_PRESETS["opentrons"], simulate=True)
+        path = b._resolve_visualizer_favicon()
+        assert Path(path).exists()
+        await b.teardown()
+        assert not Path(path).exists()

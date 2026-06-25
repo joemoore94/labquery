@@ -19,10 +19,11 @@ import websockets
 from dotenv import load_dotenv
 
 from labquery.lims_client import LIMSClient
+from labquery.measure import _find_measure_binary
 from labquery.nl_layer import MAX_TOOL_ITERATIONS, Conversation, ToolDispatcher
 from labquery.notify import SlackNotifier
 from labquery.plr_runner import PLRRunner
-from labquery.tools import SYSTEM_PROMPT, TOOLS
+from labquery.tools import TOOLS, build_system_prompt
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -59,6 +60,9 @@ class ChatServer:
         self.ws_port = ws_port
         self.http_port = http_port
         self.notifier = notifier
+        has_plate_reader = _find_measure_binary() is not None
+        self.tools = [t for t in TOOLS if t["name"] != "measure_well" or has_plate_reader]
+        self.system_prompt = build_system_prompt(has_plate_reader=has_plate_reader)
         self._sessions: dict[int, ChatSession] = {}
 
     async def start(self) -> None:
@@ -160,8 +164,8 @@ class ChatServer:
                 async with session.client.messages.stream(
                     model=session.model,
                     max_tokens=1024,
-                    system=SYSTEM_PROMPT,
-                    tools=TOOLS,
+                    system=self.system_prompt,
+                    tools=self.tools,
                     messages=session.conversation.to_api_messages(),
                 ) as stream:
                     async for event in stream:

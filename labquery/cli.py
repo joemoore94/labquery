@@ -75,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Slack incoming webhook URL for notifications (or set SLACK_WEBHOOK_URL env var)",
     )
     parser.add_argument(
+        "--seed",
+        action="store_true",
+        help="Seed the local LIMS with 10,000 synthetic samples (only with --lims local)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose logging",
@@ -159,6 +164,10 @@ def main() -> None:
         )
         sys.exit(1)
 
+    if args.seed and args.lims != "local":
+        print("Error: --seed only applies to --lims local.")
+        sys.exit(1)
+
     lims_backend = args.lims
 
     labio_proc = None
@@ -168,7 +177,7 @@ def main() -> None:
         lims = LabioAllClient(base_url=args.lims_url)
     elif lims_backend == "local":
         from labquery.lims_server import start_local_lims
-        start_local_lims()
+        start_local_lims(seed=args.seed)
         lims = LabioAllClient(base_url=args.lims_url or "http://127.0.0.1:5001")
     elif lims_backend == "benchling":
         from labquery.lims_client import BenchlingClient

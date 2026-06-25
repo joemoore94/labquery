@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 import anthropic
 
 from labquery.lims_client import LIMSClient, RunRecord
-from labquery.measure import measure_well
+from labquery.measure import measure_well, _find_measure_binary
 from labquery.notify import SlackNotifier
 from labquery.plr_runner import PLRRunner
-from labquery.tools import SYSTEM_PROMPT, TOOLS
+from labquery.tools import TOOLS, build_system_prompt
 from labquery.well_utils import expand_well_list, validate_wells
 
 
@@ -79,6 +79,8 @@ class ToolDispatcher:
             "transfer": self._handle_transfer,
             "aspirate_dispense": self._handle_aspirate_dispense,
             "get_well_contents": self._handle_get_well_contents,
+            "search_samples": self._handle_search_samples,
+            "create_sample": self._handle_create_sample,
         }
 
         handler = handlers.get(tool_name)
@@ -423,11 +425,45 @@ class ToolDispatcher:
         return json.dumps(status)
 
     def _handle_list_sample_ids(self, inp: dict) -> str:
-        ids = self.lims.list_sample_ids()
         limit = inp.get("limit", 50)
+        material_type = inp.get("material_type")
+        if material_type:
+            samples = self.lims.list_samples(sample_type=material_type)
+            ids = [s.sample_id for s in samples]
+        else:
+            ids = self.lims.list_sample_ids()
         return json.dumps({
             "total_count": len(ids),
             "sample_ids": ids[:limit],
+        })
+
+    def _handle_search_samples(self, inp: dict) -> str:
+        query = inp.get("query", "")
+        limit = inp.get("limit", 20)
+        samples = self.lims.search_samples(query, limit)
+        return json.dumps({
+            "count": len(samples),
+            "samples": [
+                {
+                    "sample_id": s.sample_id,
+                    "material_type": s.material_type,
+                    "volume_ul": s.volume_ul,
+                }
+                for s in samples
+            ],
+        })
+
+    def _handle_create_sample(self, inp: dict) -> str:
+        material_type = inp.get("material_type", "")
+        volume_ul = inp.get("volume_ul", 1000.0)
+        concentration = inp.get("concentration", 0.0)
+        sample = self.lims.create_sample(material_type, volume_ul, concentration)
+        if sample is None:
+            return json.dumps({"error": "Failed to create sample. This LIMS backend may not support sample creation."})
+        return json.dumps({
+            "sample_id": sample.sample_id,
+            "material_type": sample.material_type,
+            "volume_ul": sample.volume_ul,
         })
 
     def _handle_get_run_history(self, inp: dict) -> str:
@@ -463,6 +499,9 @@ class NLLayer:
         self.client = anthropic.Anthropic()
         self.conversation = Conversation()
         self.dispatcher = ToolDispatcher(lims, plr, notifier=notifier)
+        has_plate_reader = _find_measure_binary() is not None
+        self.tools = [t for t in TOOLS if t["name"] != "measure_well" or has_plate_reader]
+        self.system_prompt = build_system_prompt(has_plate_reader=has_plate_reader)
 
     def query(self, user_input: str) -> str:
         self.conversation.add_user(user_input)
@@ -471,8 +510,8 @@ class NLLayer:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
+                system=self.system_prompt,
+                tools=self.tools,
                 messages=self.conversation.to_api_messages(),
             )
 
@@ -506,8 +545,8 @@ class NLLayer:
             with self.client.messages.stream(
                 model=self.model,
                 max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
+                system=self.system_prompt,
+                tools=self.tools,
                 messages=self.conversation.to_api_messages(),
             ) as stream:
                 for event in stream:

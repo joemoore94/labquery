@@ -7,10 +7,13 @@ lims_client, or tools imports from this module.
 
 from __future__ import annotations
 
+import base64
+import tempfile
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pylabrobot.liquid_handling import LiquidHandler
@@ -201,6 +204,10 @@ BACKEND_PRESETS: dict[str, BackendConfig] = {
 class PLRBridge:
     """Manages a real PyLabRobot LiquidHandler with configurable backend."""
 
+    _DEFAULT_FAVICON = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII="
+    )
+
     def __init__(
         self,
         config: BackendConfig,
@@ -246,15 +253,28 @@ class PLRBridge:
                     f"Visualizer not supported for {self._config.name}."
                 )
             from pylabrobot.visualizer import Visualizer
-            self._visualizer = Visualizer(resource=self._lh.deck)
+
+            favicon_path = self._resolve_visualizer_favicon()
+            self._visualizer = Visualizer(resource=self._lh.deck, favicon=favicon_path)
             await self._visualizer.setup()
 
         self._ready = True
+
+    def _resolve_visualizer_favicon(self) -> str:
+        """Workaround: some PLR installs lack the default logo.png asset."""
+        f = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        f.write(base64.b64decode(self._DEFAULT_FAVICON))
+        f.close()
+        self._favicon_tmp = f.name
+        return f.name
 
     async def teardown(self) -> None:
         if self._visualizer:
             await self._visualizer.stop()
             self._visualizer = None
+        if getattr(self, "_favicon_tmp", None):
+            Path(self._favicon_tmp).unlink(missing_ok=True)
+            self._favicon_tmp = None
         if self._lh:
             await self._lh.stop()
             self._lh = None
@@ -300,10 +320,13 @@ class PLRBridge:
 
         tubes = self._place_samples(samples)
 
+        protocol_methods = {
+            "serial_dilution": self._run_serial_dilution,
+        }
+        run_method = protocol_methods.get(key, self._run_transfers)
+
         try:
-            volumes_consumed = await self._run_transfers(
-                tubes, vol_per_sample
-            )
+            volumes_consumed = await run_method(tubes, vol_per_sample)
         finally:
             self._remove_tubes()
 
@@ -366,6 +389,38 @@ class PLRBridge:
         for holder in self._layout.tube_rack.children:
             if holder.resource is not None:
                 holder.unassign_child_resource(holder.resource)
+
+    async def _run_serial_dilution(
+        self, tubes: list[Tube], vol_per_sample: float, dilution_steps: int = 6
+    ) -> dict[str, float]:
+        """1:2 serial dilution. Transfers vol from tube into column 1, then
+        carries half forward across the row for dilution_steps wells."""
+        volumes_consumed: dict[str, float] = {}
+        layout = self._layout
+        rows = "ABCDEFGH"
+
+        for i, tube in enumerate(tubes):
+            row = rows[i % len(rows)]
+            wells = [layout.plate[f"{row}{col}"] for col in range(1, dilution_steps + 1)]
+
+            tip_spot = self._next_tip_spot()
+            await self._lh.pick_up_tips(tip_spot)
+            await self._lh.aspirate([tube], vols=[vol_per_sample])
+            await self._lh.dispense(wells[0], vols=[vol_per_sample])
+            await self._lh.drop_tips([layout.trash])
+
+            transfer_vol = vol_per_sample / 2
+            for j in range(len(wells) - 1):
+                tip_spot = self._next_tip_spot()
+                await self._lh.pick_up_tips(tip_spot)
+                await self._lh.aspirate(wells[j], vols=[transfer_vol])
+                await self._lh.dispense(wells[j + 1], vols=[transfer_vol])
+                await self._lh.drop_tips([layout.trash])
+
+            sample_id = tube.name.removeprefix("tube_")
+            volumes_consumed[sample_id] = vol_per_sample
+
+        return volumes_consumed
 
     async def _run_transfers(
         self, tubes: list[Tube], vol_per_sample: float
