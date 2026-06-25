@@ -23,8 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lims",
         choices=["labio", "local", "benchling", "elabjournal"],
-        default=None,
-        help="LIMS backend: labio (default with --simulator), local (persistent SQLite), benchling, or elabjournal",
+        default="local",
+        help="LIMS backend: local (default, persistent SQLite), labio, benchling, or elabjournal",
     )
     parser.add_argument(
         "--lims-url",
@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--simulator",
         action="store_true",
-        help="Run in simulator mode: auto-start labio-all LIMS and use PLR simulator",
+        help="Use PLR simulator backend instead of hardware (required until hardware drivers are tested)",
     )
     parser.add_argument(
         "--visualizer",
@@ -114,8 +114,7 @@ def run_interactive(nl: NLLayer) -> None:
 
 async def run_serve(args, lims, plr, notifier=None) -> None:
     """Start the WebSocket chat server."""
-    if args.simulator:
-        await plr.setup()
+    await plr.setup()
 
     from labquery.ws_server import ChatServer
 
@@ -160,13 +159,12 @@ def main() -> None:
         )
         sys.exit(1)
 
-    lims_backend = args.lims or ("labio" if args.simulator else None)
+    lims_backend = args.lims
 
     labio_proc = None
     if lims_backend == "labio":
-        if args.simulator:
-            from labquery.labio_server import start_labio_server
-            labio_proc = start_labio_server()
+        from labquery.labio_server import start_labio_server
+        labio_proc = start_labio_server()
         lims = LabioAllClient(base_url=args.lims_url)
     elif lims_backend == "local":
         from labquery.lims_server import start_local_lims
@@ -178,15 +176,6 @@ def main() -> None:
     elif lims_backend == "elabjournal":
         from labquery.lims_client import ELabJournalClient
         lims = ELabJournalClient(url=args.lims_url)
-    else:
-        print(
-            "Error: no LIMS backend selected.\n"
-            "Use --simulator for labio-all simulator,\n"
-            "--lims local for persistent SQLite LIMS,\n"
-            "--lims benchling for Benchling,\n"
-            "--lims elabjournal for eLabJournal."
-        )
-        sys.exit(1)
     plr = PLRRunner(
         backend=args.backend,
         simulate=args.simulator,
@@ -199,18 +188,26 @@ def main() -> None:
     if notifier.enabled:
         logging.getLogger("labquery").info("Slack notifications enabled")
 
-    if args.serve:
-        try:
-            asyncio.run(run_serve(args, lims, plr, notifier))
-        except KeyboardInterrupt:
-            print("\nShutting down.")
-    elif args.query:
-        nl = NLLayer(lims=lims, plr=plr, model=args.model, notifier=notifier)
-        response = nl.query(args.query)
-        print(response)
-    else:
-        nl = NLLayer(lims=lims, plr=plr, model=args.model, notifier=notifier)
-        run_interactive(nl)
+    try:
+        if args.serve:
+            try:
+                asyncio.run(run_serve(args, lims, plr, notifier))
+            except KeyboardInterrupt:
+                print("\nShutting down.")
+        else:
+            asyncio.run(plr.setup())
+            nl = NLLayer(lims=lims, plr=plr, model=args.model, notifier=notifier)
+            if args.query:
+                response = nl.query(args.query)
+                print(response)
+            else:
+                run_interactive(nl)
+    except NotImplementedError as e:
+        print(
+            f"Error: {e}\n"
+            "Use --simulator to run with a simulated liquid handler."
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -13,18 +13,28 @@ export ANTHROPIC_API_KEY=your_key_here
 
 ## Usage
 
-Start the chat UI with the simulator (auto-starts labio-all and PLR):
+LIMS starts automatically (defaults to local SQLite). `--simulator` selects the simulated liquid handler. Required until hardware drivers are validated.
 
 ```bash
+# Chat UI with local LIMS + simulated liquid handler (default, no external deps)
 labquery --simulator --serve
+```
+
+Select a LIMS backend:
+
+```bash
+labquery --lims local --simulator --serve        # local SQLite (default)
+labquery --lims labio --simulator --serve         # labio-all (auto-cloned into /tmp/labio-all)
+labquery --lims benchling --simulator --serve     # Benchling (requires env vars, see below)
+labquery --lims elabjournal --simulator --serve   # eLabJournal (requires env vars, see below)
 ```
 
 Select a liquid handler backend:
 
 ```bash
-labquery --simulator --backend tecan --serve
-labquery --simulator --backend hamilton --serve
-labquery --simulator --backend opentrons --serve   # default
+labquery --simulator --backend opentrons --serve  # OT-2 deck (default)
+labquery --simulator --backend tecan --serve      # EVO 150 deck
+labquery --simulator --backend hamilton --serve    # STARLet deck
 ```
 
 Add `--visualizer` to open the PLR deck viewer (Opentrons only for now):
@@ -45,19 +55,13 @@ Interactive REPL:
 labquery --simulator
 ```
 
-Use the persistent local LIMS (SQLite, data survives restarts):
-
-```bash
-labquery --lims local --serve
-```
-
 Connect to Benchling:
 
 ```bash
 export BENCHLING_URL=https://mycompany.benchling.com
 export BENCHLING_API_KEY=sk_...
 pip install labquery[benchling]
-labquery --lims benchling --serve
+labquery --lims benchling --simulator --serve
 ```
 
 Connect to eLabJournal:
@@ -65,13 +69,13 @@ Connect to eLabJournal:
 ```bash
 export ELABJOURNAL_URL=https://mycompany.elabjournal.com
 export ELABJOURNAL_API_KEY=your_key
-labquery --lims elabjournal --serve
+labquery --lims elabjournal --simulator --serve
 ```
 
 Connect to an existing labio-all instance:
 
 ```bash
-labquery --lims labio --lims-url http://your-lims:5001 --serve
+labquery --lims labio --lims-url http://your-lims:5001 --simulator --serve
 ```
 
 Enable Slack notifications for run completions and errors:
@@ -102,7 +106,9 @@ labquery --simulator --serve
 | `tecan` | EVO 150 | ChatterBox | stubbed |
 | `hamilton` | STARLet | ChatterBox | stubbed |
 
-Hardware backends are defined via PyLabRobot but **gated behind a `NotImplementedError`** until tested on real machines. To connect to real hardware, you would need to:
+`--backend` selects the liquid handler platform (deck layout, labware, driver). `--simulator` controls whether the simulator or hardware driver is used. Hardware is the default but currently stubbed for all backends. **Use `--simulator` until hardware drivers are validated.** Running without it will exit with an error.
+
+To connect to real hardware, you would need to:
 
 1. Remove the hardware gate in `plr_bridge.py` (the `NotImplementedError` in `PLRBridge.setup()`)
 2. Customize the deck layout function for your machine (`_setup_tecan_deck`, `_setup_hamilton_deck`, or `_setup_opentrons_deck`) -- the slot assignments, carrier types, and labware definitions are placeholders and will likely not match your physical deck
@@ -111,7 +117,7 @@ Hardware backends are defined via PyLabRobot but **gated behind a `NotImplemente
 
 ## Architecture
 
-```
+```text
 labquery/
   cli.py           -- entry point, CLI flags, mode selection
   nl_layer.py      -- Claude tool-use loop and ToolDispatcher
